@@ -39,7 +39,7 @@ The code is public (MIT). The bunny art ships inside the binary, which is fine, 
 ## Steps
 
 0. **Have the bunny art.** It's licensed and gitignored, so it has to be in
-   `packages/brand/private/` on this machine (13 files, see `packages/brand/README.md`). The build
+   `packages/brand/private/` on this machine (14 files, see `packages/brand/README.md`). The build
    refuses to run without it. If it's missing, run `bun run art:fetch` (it reads the private
    `DailyStandup-io/pr-bunny-art` repo with the user's `gh` login). If that fails, ask the user.
    Don't work around the check.

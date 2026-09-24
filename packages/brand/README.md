@@ -5,14 +5,16 @@ PR Bunny's art, shared by the app (`apps/app`) and the website (`apps/web`).
 | What | Where | In git? |
 |---|---|---|
 | Bunny faces `bunny-1…10.png` (31×31 pixel art at 4×) and favicons (`favicon.ico`, `icon-32.png`, `apple-touch-icon.png`) | `private/` | **No.** Licensed from Envato Elements for PR Bunny only |
+| Social preview `og.png` (1200×630, Open Graph / Twitter) | `private/` | **No.** It shows the bunny |
 | DailyStandup.io mark | `dailystandup.svg` | Yes (not covered by the MIT license) |
 | Theme icons | `icons/` | Yes |
 
 `scripts/generate.ts` runs on `bun install` and before every dev, typecheck and build. It writes
 `generated/art.ts`:
-- **When `private/` has the art:** the images are inlined as data URIs, and the website's icon files
-  are written to `apps/web/app/`.
-- **When it doesn't:** everything is `null` and the bunny images are left out. Forks and
+- **When `private/` has the art:** the images are inlined as data URIs, and the website's icon and
+  social preview files (`opengraph-image.png`, `twitter-image.png`, with alt text) are written to
+  `apps/web/app/`.
+- **When it doesn't:** everything is `null` and the bunny images are left out. The site's social cards become text-only. Forks and
   contributors can build and run everything without the art.
 
 Release builds need the art: `apps/app/scripts/build.ts` runs the generator with `--require`, and so

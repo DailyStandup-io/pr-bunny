@@ -10,7 +10,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-export const ART_FILES = [...Array.from({ length: 10 }, (_, i) => `bunny-${i + 1}.png`), "favicon.ico", "icon-32.png", "apple-touch-icon.png"];
+export const ART_FILES = [...Array.from({ length: 10 }, (_, i) => `bunny-${i + 1}.png`), "favicon.ico", "icon-32.png", "apple-touch-icon.png", "og.png"];
 const PRIVATE = resolve(import.meta.dir, "..", "private");
 const REPO = process.env.PR_BUNNY_ART_REPO ?? "DailyStandup-io/pr-bunny-art";
 const REF = process.env.PR_BUNNY_ART_REF ?? "main";

@@ -10,7 +10,8 @@
 //   bun packages/brand/scripts/generate.ts --require   fail without the art (release builds)
 //
 // With the art, it also writes the website's icon files (apps/web/app/icon.png, apple-icon.png,
-// favicon.ico), which are gitignored too.
+// favicon.ico) and social preview (opengraph-image.png, twitter-image.png, + .alt.txt), all
+// gitignored. Without the art those files are removed, and the site's metadata goes text-only.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -19,7 +20,9 @@ const PRIVATE = join(BRAND, "private");
 const OUT = join(BRAND, "generated", "art.ts");
 const WEB_APP = resolve(BRAND, "..", "..", "apps", "web", "app");
 const FACES = Array.from({ length: 10 }, (_, i) => `bunny-${i + 1}.png`);
-const ICONS = { favicon: "favicon.ico", icon32: "icon-32.png", appleTouch: "apple-touch-icon.png" };
+const ICONS = { favicon: "favicon.ico", icon32: "icon-32.png", appleTouch: "apple-touch-icon.png", og: "og.png" };
+/** The social preview's alt text (Next reads it from a file next to the image). */
+const OG_ALT = "PR Bunny: a second pair of ears on every pull request. Free AI code review with the Claude Code or Codex you already use.";
 
 const required = process.argv.includes("--require") || process.env.PR_BUNNY_REQUIRE_ART === "1";
 const missing = [...FACES, ...Object.values(ICONS)].filter((f) => !existsSync(join(PRIVATE, f)));
@@ -64,12 +67,24 @@ if (!existsSync(OUT) || readFileSync(OUT, "utf8") !== text) writeFileSync(OUT, t
 
 // The website reads its icons from files in app/ (Next's convention).
 if (existsSync(WEB_APP)) {
-  const webIcons: Record<string, string> = { "icon.png": ICONS.icon32, "apple-icon.png": ICONS.appleTouch, "favicon.ico": ICONS.favicon };
+  const webIcons: Record<string, string> = {
+    "icon.png": ICONS.icon32,
+    "apple-icon.png": ICONS.appleTouch,
+    "favicon.ico": ICONS.favicon,
+    "opengraph-image.png": ICONS.og,
+    "twitter-image.png": ICONS.og,
+  };
   for (const [name, src] of Object.entries(webIcons)) {
     const dest = join(WEB_APP, name);
     if (hasArt) {
       const data = readFileSync(join(PRIVATE, src));
       if (!existsSync(dest) || !readFileSync(dest).equals(data)) writeFileSync(dest, data);
+    } else rmSync(dest, { force: true });
+  }
+  for (const name of ["opengraph-image.alt.txt", "twitter-image.alt.txt"]) {
+    const dest = join(WEB_APP, name);
+    if (hasArt) {
+      if (!existsSync(dest) || readFileSync(dest, "utf8") !== OG_ALT) writeFileSync(dest, OG_ALT);
     } else rmSync(dest, { force: true });
   }
 }

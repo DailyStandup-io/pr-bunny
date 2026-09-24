@@ -46,6 +46,10 @@ packages/brand/generated/
 apps/web/app/icon.png
 apps/web/app/apple-icon.png
 apps/web/app/favicon.ico
+apps/web/app/opengraph-image.png
+apps/web/app/opengraph-image.alt.txt
+apps/web/app/twitter-image.png
+apps/web/app/twitter-image.alt.txt
 
 # Hugeicons Pro (bun run icons:pro) and the icon module generated from it
 packages/icons/pro/

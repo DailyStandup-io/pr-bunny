@@ -1,16 +1,41 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import "./globals.css";
 
 const sans = IBM_Plex_Sans({ variable: "--font-plex-sans", subsets: ["latin"], weight: ["400", "500", "600"] });
 const mono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"], weight: ["400", "500"] });
 
+const TITLE = "PR Bunny — free AI code review from your terminal";
+const SHORT = "A second pair of ears on every pull request.";
+const DESCRIPTION =
+  "PR Bunny reviews code with the Claude Code or Codex you're already signed in to. It runs on your Mac, and nothing reaches GitHub until you press Post.";
+
+// The social preview image (app/opengraph-image.png, twitter-image.png) comes from the licensed art
+// and only exists in builds that have it; Next adds its og:image / twitter:image tags itself. Without
+// it, the tags below still give a proper text card.
+const hasSocialImage = existsSync(join(process.cwd(), "app", "opengraph-image.png"));
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://prbunny.dev"),
-  title: "PR Bunny — free AI code review from your terminal",
-  description:
-    "PR Bunny reviews code with the Claude Code or Codex you're already signed in to. It runs on your Mac, and nothing reaches GitHub until you press Post.",
-  openGraph: { title: "PR Bunny", description: "A second pair of ears on every pull request. Free, no account, no API keys.", url: "https://prbunny.dev" },
+  title: TITLE,
+  description: DESCRIPTION,
+  applicationName: "PR Bunny",
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: "https://prbunny.dev",
+    siteName: "PR Bunny",
+    title: `PR Bunny — ${SHORT}`,
+    description: "Free AI code review with the Claude Code or Codex you already use. No API keys, macOS.",
+    locale: "en_GB",
+  },
+  twitter: {
+    card: hasSocialImage ? "summary_large_image" : "summary",
+    title: `PR Bunny — ${SHORT}`,
+    description: "Free AI code review with the Claude Code or Codex you already use. No API keys, macOS.",
+  },
 };
 
 export const viewport: Viewport = {
