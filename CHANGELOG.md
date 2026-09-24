@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.1 “Basil” — 2026-09-24
+
+### Changed
+- `bunny setup` looks much better: spinners with elapsed time and live output for anything slow,
+  colours, clearer prompts, and sudo asks for your password on its own line.
+- The installer (`curl -fsSL https://prbunny.dev/install | sh`) is tidier too, and says so plainly
+  when it has to download from GitHub instead of prbunny.dev.
+
+### Fixed
+- Installing Caddy (or gh) during setup could appear frozen for minutes while Homebrew updated
+  itself. Setup now installs without that update step.
+- The installer falls back to GitHub when prbunny.dev can't be reached even with a pinned
+  version (`PR_BUNNY_VERSION=…`).
+
 ## 0.1.0 “Alfalfa” — 2026-09-24
 
 The first release of PR Bunny.

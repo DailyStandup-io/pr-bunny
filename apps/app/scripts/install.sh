@@ -44,23 +44,23 @@ esac
 # Rosetta: an x64 shell on Apple silicon should still get the native build.
 if [ "$ARCH" = x64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then ARCH=arm64; fi
 
-if [ -n "${PR_BUNNY_VERSION:-}" ]; then
-  VERSION="$PR_BUNNY_VERSION"
-elif VERSION="$(curl -fsL "$BASE/latest" 2>/dev/null)"; then
+# Find a host that answers (prbunny.dev, else GitHub), whether or not a version was pinned.
+if LATEST="$(curl -fsL "$BASE/latest" 2>/dev/null)"; then
   :
-elif [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ] && VERSION="$(curl -fsSL "$GITHUB/latest/download/latest")"; then
+elif [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ] && LATEST="$(curl -fsSL "$GITHUB/latest/download/latest")"; then
   step "prbunny.dev isn't reachable from here; downloading from GitHub instead."
   BASE="github"
 else
   fail "couldn't reach $BASE"
 fi
+VERSION="${PR_BUNNY_VERSION:-$LATEST}"
 VERSION="$(printf '%s' "$VERSION" | tr -d '[:space:]')"
 ASSET="bunny-${OS}-${ARCH}"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-ok "Latest version: ${B}${VERSION}${X} ${D}(${OS}/${ARCH})${X}"
+if [ -n "${PR_BUNNY_VERSION:-}" ]; then ok "Version: ${B}${VERSION}${X} ${D}(pinned; latest is $(printf '%s' "$LATEST" | tr -d '[:space:]'), ${OS}/${ARCH})${X}"; else ok "Latest version: ${B}${VERSION}${X} ${D}(${OS}/${ARCH})${X}"; fi
 step "Downloading ${ASSET}…"
 if [ "$BASE" = github ]; then URL="$GITHUB/download/v$VERSION/$ASSET"; else URL="$BASE/$VERSION/$ASSET"; fi
 curl -fSL --progress-bar "$URL" -o "$TMP/bunny" || fail "download failed: $URL"
