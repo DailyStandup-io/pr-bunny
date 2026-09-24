@@ -6,14 +6,17 @@
 //
 // Set PR_BUNNY_DOMAIN to use a hostname other than prbunny.localhost.
 import { $ } from "bun";
-import { COMPILED } from "../build-info";
+import { COMPILED, CODENAME, VERSION } from "../build-info";
 import { CLI_LINK, CLI_NAME, CLI_TARGET, cliInfo, linkCli, removeLegacyLinks } from "../server/cli";
 import { DATA_DIR, DOMAIN, PORT, publicUrl, saveServiceConfig, serviceConfig } from "../server/config";
 import { APP_LABEL, CADDY_LABEL, LEGACY_LABELS, PATH, install as installService } from "./service";
+import { ask as askTty, c, detail, header, icons, interactive, line, note, section, spinner, sudoUpfront, task } from "./ui";
 
 const ADMIN = "localhost:2020"; // matches the Caddyfile's admin address
 const CA_NAME = "Caddy Local Authority";
-const c = { dim: "\x1b[2m", green: "\x1b[32m", yellow: "\x1b[33m", red: "\x1b[31m", bold: "\x1b[1m", reset: "\x1b[0m" };
+/** Homebrew installs without first updating itself: that can sit silently for minutes and looks frozen. */
+const BREW_ENV = { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" };
+const tilde = (p: string) => p.replace(process.env.HOME ?? "", "~");
 
 export async function setup(argv: string[]) {
   const args = new Set(argv);
@@ -22,47 +25,40 @@ export async function setup(argv: string[]) {
   // The user's own PATH, for "is bunny on your PATH"; the rest runs with launchd's PATH.
   const userPath = process.env.PATH ?? "";
   process.env.PATH = PATH;
-
-  const ok = (m: string) => console.log(`${c.green}✓${c.reset} ${m}`);
-  const todo = (m: string) => console.log(`${c.yellow}○${c.reset} ${m}`);
-  const bad = (m: string) => console.log(`${c.red}✗${c.reset} ${m}`);
-  const step = (m: string) => console.log(`\n${c.bold}${m}${c.reset}`);
   let missing = 0;
 
-  async function confirm(q: string, yes = true): Promise<boolean> {
-    if (YES) return yes;
-    process.stdout.write(`  ${q} ${yes ? "[Y/n]" : "[y/N]"} `);
-    for await (const line of console) return line.trim() ? /^y/i.test(line.trim()) : yes;
-    return false;
-  }
-
-  /** Runs a command attached to the terminal (so sudo can prompt). */
-  async function interactive(cmd: string[]): Promise<boolean> {
-    console.log(`  ${c.dim}$ ${cmd.join(" ")}${c.reset}`);
-    const p = Bun.spawn(cmd, { stdio: ["inherit", "inherit", "inherit"] });
-    return (await p.exited) === 0;
-  }
-
+  const ask = (q: string, yes = true) => (YES ? yes : askTty(q, yes));
   const has = (bin: string) => Bun.which(bin) != null;
   const quiet = async (s: ReturnType<typeof $>) => (await s.quiet().nothrow()).exitCode === 0;
+  const brew = (label: string, ...pkg: string[]) => task(label, ["brew", "install", ...pkg], BREW_ENV);
 
-  /** A step: `done()` checks state, `fix()` makes it so. In --check mode only `done()` runs. */
+  /**
+   * A step: `done()` checks state (under a spinner), `fix()` makes it so, then it's checked again.
+   * In --check mode only `done()` runs.
+   */
   async function ensure(label: string, done: () => Promise<boolean>, fix?: () => Promise<boolean>, hint?: string) {
-    if (await done()) return ok(label);
+    const spin = spinner(label);
+    if (await done()) return spin.ok();
     if (CHECK || !fix) {
       missing++;
-      return todo(`${label}${hint ? `  ${c.dim}→ ${hint}${c.reset}` : ""}`);
+      return spin.todo(label, hint);
     }
-    if ((await fix()) && (await done())) return ok(label);
+    spin.stop(); // the fix may ask questions or run its own spinner
+    const fixed = await fix();
+    const again = spinner(label);
+    if (fixed && (await done())) return again.ok();
     missing++;
-    bad(`${label}${hint ? `  ${c.dim}→ ${hint}${c.reset}` : ""}`);
+    again.fail(label, hint);
   }
 
   // -------------------------------------------------------------------------
 
-  step("Prerequisites");
+  header("PR Bunny setup", COMPILED ? `${VERSION} “${CODENAME}”` : "from source");
+  if (CHECK) detail("Checking only: nothing will be changed.");
+
+  section("Prerequisites");
   if (process.platform !== "darwin") {
-    bad("PR Bunny's service setup is macOS-only (launchd + Keychain).");
+    line(icons.bad, "PR Bunny's service setup is macOS-only (launchd + Keychain).");
     process.exit(1);
   }
   const brewHint = has("brew") ? undefined : "needs Homebrew: https://brew.sh";
@@ -70,46 +66,48 @@ export async function setup(argv: string[]) {
   await ensure(
     "GitHub CLI (gh)",
     async () => has("gh"),
-    async () => has("brew") && (await confirm("Install gh with Homebrew?")) && interactive(["brew", "install", "gh"]),
+    async () => has("brew") && ask("Install the GitHub CLI with Homebrew?") && brew("Installing gh", "gh"),
     brewHint ?? "brew install gh",
   );
   await ensure(
     "gh is logged in",
     async () => has("gh") && quiet($`gh auth status`),
-    async () => has("gh") && (await confirm("Run `gh auth login` now?")) && interactive(["gh", "auth", "login"]),
+    async () => has("gh") && ask("Log in to GitHub now? (gh auth login)") && interactive(["gh", "auth", "login"]),
     "gh auth login",
   );
   await ensure(
-    "a coding agent: Claude Code (claude) or Codex (codex)",
+    "A coding agent: Claude Code or Codex",
     async () => has("claude") || has("codex"),
     undefined,
     "curl -fsSL https://claude.ai/install.sh | bash, or brew install codex",
   );
-  if (process.env.ANTHROPIC_API_KEY) {
-    console.log(`  ${c.yellow}note${c.reset} ANTHROPIC_API_KEY is set in this shell. PR Bunny strips it so runs use your subscription login.`);
-  }
-  console.log(`  ${c.dim}Sign-in is checked in the app's setup page: \`claude\` then /login, or \`codex login\`.${c.reset}`);
+  if (process.env.ANTHROPIC_API_KEY) note("ANTHROPIC_API_KEY is set in this shell. PR Bunny ignores it, so runs use your subscription.");
+  detail("Agent sign-in is checked in the browser setup: `claude` then /login, or `codex login`.");
 
   if (!COMPILED) {
-    step("Dependencies");
-    await ensure("node_modules installed", async () => Bun.file("node_modules/.bin/tsc").exists(), async () => interactive(["bun", "install"]));
+    section("Dependencies");
+    await ensure(
+      "node_modules installed",
+      async () => Bun.file("node_modules/.bin/tsc").exists(),
+      async () => task("bun install", ["bun", "install"]),
+    );
   }
 
   // HTTPS is optional: http://127.0.0.1:4477 works with no Caddy and no sudo.
-  step("Address");
+  section("Address");
   let https = serviceConfig().https;
   if (args.has("--https")) https = true;
   else if (args.has("--no-https")) https = false;
   else if (!CHECK) {
-    console.log(`  ${c.dim}PR Bunny runs at http://127.0.0.1:${PORT}. Optionally it can also be https://${DOMAIN},${c.reset}`);
-    console.log(`  ${c.dim}which installs Caddy and needs sudo once (a hosts entry and a trusted local certificate).${c.reset}`);
-    https = await confirm(`Serve at https://${DOMAIN}?`, https);
+    detail(`PR Bunny runs at http://127.0.0.1:${PORT}. It can also be https://${DOMAIN},`);
+    detail("which installs Caddy and needs sudo once (a hosts entry and a trusted local certificate).");
+    https = ask(`Serve at https://${DOMAIN} too?`, https);
   }
   if (!CHECK) saveServiceConfig({ https });
-  ok(https ? `https://${DOMAIN}` : `http://127.0.0.1:${PORT} (run \`bunny setup --https\` for https://${DOMAIN})`);
+  line(icons.ok, https ? `https://${DOMAIN}` : `http://127.0.0.1:${PORT}`, https ? undefined : `bunny setup --https for https://${DOMAIN}`);
 
   const brewCaddyActive = async () => {
-    const out = (await $`brew services info caddy --json`.quiet().nothrow()).stdout.toString();
+    const out = (await $`brew services info caddy --json`.env({ ...process.env, ...BREW_ENV }).quiet().nothrow()).stdout.toString();
     try {
       const [info] = JSON.parse(out);
       return Boolean(info?.running || info?.loaded);
@@ -118,11 +116,11 @@ export async function setup(argv: string[]) {
     }
   };
   if (https) {
-    step(`HTTPS: ${DOMAIN}`);
+    section(`HTTPS: ${DOMAIN}`);
     await ensure(
       "Caddy",
       async () => has("caddy"),
-      async () => has("brew") && (await confirm("Install Caddy with Homebrew?")) && interactive(["brew", "install", "caddy"]),
+      async () => has("brew") && ask("Install Caddy with Homebrew?") && brew("Installing Caddy", "caddy"),
       brewHint ?? "brew install caddy",
     );
     const hostsHas = async () => (await Bun.file("/etc/hosts").text()).split("\n").some((l) => l.trim().split(/\s+/).includes(DOMAIN) && !l.trim().startsWith("#"));
@@ -130,75 +128,94 @@ export async function setup(argv: string[]) {
       `/etc/hosts maps ${DOMAIN} to 127.0.0.1`,
       hostsHas,
       async () =>
-        (await confirm(`Add "127.0.0.1 ${DOMAIN}" to /etc/hosts? (sudo)`)) &&
-        interactive(["sudo", "sh", "-c", `printf '\\n127.0.0.1 ${DOMAIN}\\n' >> /etc/hosts`]),
+        ask(`Add "127.0.0.1 ${DOMAIN}" to /etc/hosts?`) &&
+        (await sudoUpfront("Editing /etc/hosts")) &&
+        task("Updating /etc/hosts", ["sudo", "-n", "sh", "-c", `printf '\\n127.0.0.1 ${DOMAIN}\\n' >> /etc/hosts`]),
       `echo "127.0.0.1 ${DOMAIN}" | sudo tee -a /etc/hosts`,
     );
     await ensure(
-      "Homebrew's own Caddy service is off (it would fight over port 443)",
+      "Homebrew's own Caddy service is off (it would clash over port 443)",
       async () => !has("caddy") || !(await brewCaddyActive()),
-      async () => (await confirm("Stop `brew services` caddy?")) && interactive(["brew", "services", "stop", "caddy"]),
+      async () => ask("Stop Homebrew's Caddy service?") && task("Stopping brew services caddy", ["brew", "services", "stop", "caddy"], BREW_ENV),
       "brew services stop caddy",
     );
   }
 
-  step("Login service");
+  section("Login service");
   const agentRunning = async (label: string) =>
     /state = running/.test((await $`launchctl print gui/${process.getuid!()}/${label}`.quiet().nothrow()).stdout.toString());
   const portHolder = async () => (await $`lsof -tiTCP:${PORT} -sTCP:LISTEN`.quiet().nothrow()).stdout.toString().trim();
   const wantCaddy = https && has("caddy");
   await ensure(
-    wantCaddy ? "app + Caddy launchd agents running" : "app launchd agent running",
+    wantCaddy ? "PR Bunny and Caddy start at login" : "PR Bunny starts at login",
     async () => (await agentRunning(APP_LABEL)) && wantCaddy === (await agentRunning(CADDY_LABEL)),
     async () => {
       const pid = await portHolder();
       if (pid && !(await agentRunning(APP_LABEL)) && !(await Promise.all(LEGACY_LABELS.map(agentRunning))).some(Boolean)) {
-        console.log(`  ${c.yellow}note${c.reset} port ${PORT} is held by pid ${pid} (a dev server?). Stop it, or the app agent can't start.`);
+        note(`Port ${PORT} is in use by pid ${pid} (a dev server?). Stop it, or PR Bunny can't start.`);
       }
-      if (!(await confirm("Install and start the login service?"))) return false;
-      await installService();
-      await Bun.sleep(3000);
+      if (!ask("Install and start the login service?")) return false;
+      const spin = spinner("Starting PR Bunny");
+      const log: string[] = [];
+      const orig = console.log;
+      console.log = (...a: unknown[]) => void log.push(a.join(" ")); // service.ts reports per agent; keep the spinner tidy
+      try {
+        await installService();
+      } catch (e) {
+        console.log = orig;
+        spin.fail("Starting PR Bunny", e instanceof Error ? e.message : String(e));
+        return false;
+      } finally {
+        console.log = orig;
+      }
+      // Wait for it to answer rather than a fixed sleep.
+      for (let i = 0; i < 20 && !(await quiet($`curl -sf --max-time 1 -o /dev/null http://127.0.0.1:${PORT}/api/health`)); i++) await Bun.sleep(500);
+      spin.stop();
       return true;
     },
     "bunny service install",
   );
 
-  step("Terminal command");
+  section("Terminal command");
   removeLegacyLinks(CHECK);
   const cliOnPath = () => Bun.which(CLI_NAME, { PATH: userPath }) != null;
   await ensure(
-    `\`${CLI_NAME}\` command (${CLI_NAME} review, from any checkout)`,
+    `\`${CLI_NAME}\` command`,
     async () => cliInfo().linked,
     async () => {
       const { conflict } = cliInfo();
-      if (!(await confirm(`Link ${CLI_LINK.replace(process.env.HOME ?? "", "~")} → ${CLI_TARGET.replace(process.env.HOME ?? "", "~")}?`))) return false;
-      if (conflict && !(await confirm(`Something else is there (${conflict}). Replace it?`, false))) return false;
+      if (!ask(`Link ${tilde(CLI_LINK)} so \`${CLI_NAME} review\` works from any checkout?`)) return false;
+      if (conflict && !ask(`Something else is there (${conflict}). Replace it?`, false)) return false;
       linkCli({ replace: true });
       return true;
     },
     `ln -s ${CLI_TARGET} ${CLI_LINK}`,
   );
   if (cliInfo().linked && !cliOnPath()) {
-    console.log(`  ${c.yellow}note${c.reset} ${CLI_LINK.replace(/\/[^/]+$/, "")} isn't on your PATH. Add it in ~/.zshrc: export PATH="$HOME/.local/bin:$PATH"`);
+    note(`${tilde(CLI_LINK.replace(/\/[^/]+$/, ""))} isn't on your PATH. Add to ~/.zshrc: ${c.cyan('export PATH="$HOME/.local/bin:$PATH"')}`);
   }
 
   if (https) {
-    step("Certificate");
+    section("Certificate");
     const caTrusted = async () => quiet($`security find-certificate -c ${CA_NAME} /Library/Keychains/System.keychain`);
     await ensure(
-      "Caddy's local CA is trusted by macOS",
+      "Caddy's local certificate is trusted by macOS",
       caTrusted,
       async () => {
         if (!has("caddy")) return false;
-        // Caddy creates its CA on first run of a `tls internal` site; wait for its admin API.
+        if (!ask("Trust Caddy's local certificate? (adds it to the System keychain)")) return false;
+        // Caddy creates its CA on the first run of a `tls internal` site; wait for its admin API.
+        const wait = spinner("Waiting for Caddy");
         for (let i = 0; i < 20 && !(await quiet($`curl -sf http://${ADMIN}/pki/ca/local`)); i++) await Bun.sleep(500);
-        return (await confirm("Trust Caddy's local CA? (sudo, adds it to the System keychain)")) && interactive(["sudo", "caddy", "trust", "--address", ADMIN]);
+        wait.stop();
+        // macOS may show its own password or Touch ID dialog here, so this one stays attached to the terminal.
+        return (await sudoUpfront("Trusting the certificate")) && interactive(["sudo", "caddy", "trust", "--address", ADMIN]);
       },
       `sudo caddy trust --address ${ADMIN}`,
     );
   }
 
-  step("Health check");
+  section("Health check");
   const url = publicUrl();
   await ensure(
     `${url} responds${https ? " with a trusted certificate" : ""}`,
@@ -210,16 +227,16 @@ export async function setup(argv: string[]) {
       return false;
     },
     undefined,
-    `see ${DATA_DIR.replace(process.env.HOME ?? "", "~")}/logs/app.log${https ? " and caddy.log" : ""}`,
+    `see ${tilde(DATA_DIR)}/logs/app.log${https ? " and caddy.log" : ""}`,
   );
 
   if (missing) {
-    console.log(`\n${c.yellow}${missing} step(s) outstanding.${CHECK ? " Run `bunny setup` to fix them." : ""}${c.reset}`);
+    console.log(`\n${c.yellow(`${missing} step${missing === 1 ? "" : "s"} outstanding.`)}${CHECK ? " Run `bunny setup` to fix them." : ""}`);
     process.exit(1);
   }
   // The rest (agent, repos, review skills) happens in the browser, on first launch.
   const onboarded = await fetch(`http://127.0.0.1:${PORT}/api/setup`).then((r) => r.json()).then((s: any) => Boolean(s.completedAt), () => true);
   const open = onboarded ? url : `${url}/setup`;
-  console.log(`\n${c.green}All set →${c.reset} ${c.bold}${open}${c.reset}${onboarded ? "" : `  ${c.dim}(finish setup in the browser)${c.reset}`}`);
+  console.log(`\n  ${c.rose("●")} ${c.bold("All set")} ${c.dim("→")} ${c.cyan(open)}${onboarded ? "" : c.dim("  (finish setup in the browser)")}\n`);
   if (!CHECK && !YES) Bun.spawn(["open", open], { stdout: "ignore", stderr: "ignore" });
 }

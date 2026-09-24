@@ -18,7 +18,18 @@ GITHUB="https://github.com/DailyStandup-io/pr-bunny/releases"
 HOME_DIR="${PR_BUNNY_HOME:-$HOME/.pr-bunny}"
 BIN_DIR="$HOME_DIR/bin"
 
-fail() { printf 'PR Bunny install: %s\n' "$1" >&2; exit 1; }
+# Colours only on a terminal (and not with NO_COLOR). Under `curl | sh`, stdout is still the terminal.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  B="$(printf '\033[1m')"; D="$(printf '\033[2m')"; G="$(printf '\033[32m')"; R="$(printf '\033[31m')"
+  P="$(printf '\033[38;2;214;96;124m')"; C="$(printf '\033[36m')"; X="$(printf '\033[0m')"
+else
+  B=; D=; G=; R=; P=; C=; X=
+fi
+ok() { printf '%s✓%s %s\n' "$G" "$X" "$1"; }
+step() { printf '%s›%s %s\n' "$C" "$X" "$1"; }
+fail() { printf '%s✗%s %s\n' "$R" "$X" "$1" >&2; exit 1; }
+
+printf '\n  %s●%s %sPR Bunny%s %sinstaller%s\n\n' "$P" "$X" "$B" "$X" "$D" "$X"
 
 OS="$(uname -s)"
 case "$OS" in
@@ -35,9 +46,10 @@ if [ "$ARCH" = x64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || ech
 
 if [ -n "${PR_BUNNY_VERSION:-}" ]; then
   VERSION="$PR_BUNNY_VERSION"
-elif VERSION="$(curl -fsSL "$BASE/latest")"; then
+elif VERSION="$(curl -fsL "$BASE/latest" 2>/dev/null)"; then
   :
 elif [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ] && VERSION="$(curl -fsSL "$GITHUB/latest/download/latest")"; then
+  step "prbunny.dev isn't reachable from here; downloading from GitHub instead."
   BASE="github"
 else
   fail "couldn't reach $BASE"
@@ -48,7 +60,8 @@ ASSET="bunny-${OS}-${ARCH}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-printf 'Downloading PR Bunny %s (%s)…\n' "$VERSION" "$ASSET"
+ok "Latest version: ${B}${VERSION}${X} ${D}(${OS}/${ARCH})${X}"
+step "Downloading ${ASSET}…"
 if [ "$BASE" = github ]; then URL="$GITHUB/download/v$VERSION/$ASSET"; else URL="$BASE/$VERSION/$ASSET"; fi
 curl -fSL --progress-bar "$URL" -o "$TMP/bunny" || fail "download failed: $URL"
 curl -fsSL "$URL.sha256" -o "$TMP/bunny.sha256" || fail "checksum download failed"
@@ -56,17 +69,18 @@ curl -fsSL "$URL.sha256" -o "$TMP/bunny.sha256" || fail "checksum download faile
 EXPECTED="$(cut -d' ' -f1 "$TMP/bunny.sha256")"
 ACTUAL="$(shasum -a 256 "$TMP/bunny" | cut -d' ' -f1)"
 [ "$EXPECTED" = "$ACTUAL" ] || fail "checksum mismatch (expected $EXPECTED, got $ACTUAL)"
+ok "Checksum verified ${D}(sha256 ${ACTUAL%"${ACTUAL#????????????}"}…)${X}"
 
 chmod 755 "$TMP/bunny"
 "$TMP/bunny" version >/dev/null 2>&1 || fail "the downloaded binary doesn't run on this Mac"
 mkdir -p "$BIN_DIR"
 mv -f "$TMP/bunny" "$BIN_DIR/bunny"
-printf 'Installed %s\n' "$BIN_DIR/bunny"
+ok "Installed ${B}${BIN_DIR}/bunny${X}"
 
 # An update replaces the binary under a running service; setup restarts it on the new version.
 if [ -z "${PR_BUNNY_NO_SETUP:-}" ]; then
-  printf '\nRunning bunny setup…\n'
+  printf '\n'
   if [ -r /dev/tty ]; then "$BIN_DIR/bunny" setup < /dev/tty; else "$BIN_DIR/bunny" setup --yes; fi
 else
-  printf 'Next: %s setup\n' "$BIN_DIR/bunny"
+  step "Next: ${C}${BIN_DIR}/bunny setup${X}"
 fi
