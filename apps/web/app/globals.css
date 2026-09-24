@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/* PR Bunny's tokens (same as the app). Light by default; [data-theme] is set before paint from the
+   saved choice or the OS (see the script in layout.tsx). */
+:root,
+[data-theme="light"] {
+  --bg: oklch(0.975 0.004 85);
+  --surface: oklch(0.995 0.002 85);
+  --sunken: oklch(0.955 0.005 85);
+  --hover: oklch(0.945 0.006 85);
+  --line: oklch(0.905 0.006 85);
+  --line-strong: oklch(0.84 0.008 85);
+  --text: oklch(0.24 0.012 80);
+  --text-2: oklch(0.43 0.012 80);
+  --text-3: oklch(0.55 0.01 80);
+  --accent: oklch(0.57 0.13 12);
+  --accent-soft: oklch(0.57 0.13 12 / 0.1);
+  --accent-soft-2: oklch(0.57 0.13 12 / 0.18);
+  --on-accent: oklch(0.99 0 0);
+  --add: oklch(0.5 0.13 150);
+  --warn: oklch(0.55 0.12 70);
+  --del: oklch(0.53 0.17 25);
+  --code: oklch(0.968 0.004 85);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: oklch(0.185 0.006 80);
+  --surface: oklch(0.215 0.006 80);
+  --sunken: oklch(0.17 0.006 80);
+  --hover: oklch(0.25 0.007 80);
+  --line: oklch(0.285 0.007 80);
+  --line-strong: oklch(0.36 0.008 80);
+  --text: oklch(0.93 0.006 85);
+  --text-2: oklch(0.79 0.008 85);
+  --text-3: oklch(0.65 0.008 85);
+  --accent: oklch(0.76 0.1 12);
+  --accent-soft: oklch(0.76 0.1 12 / 0.14);
+  --accent-soft-2: oklch(0.76 0.1 12 / 0.24);
+  --on-accent: oklch(0.22 0.03 12);
+  --add: oklch(0.77 0.13 150);
+  --warn: oklch(0.82 0.12 80);
+  --del: oklch(0.73 0.15 25);
+  --code: oklch(0.17 0.006 80);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--text);
+  --color-fg-2: var(--text-2);
+  --color-fg-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-add: var(--add);
+  --color-warn: var(--warn);
+  --color-del: var(--del);
+  --color-code: var(--code);
+}
+
+@layer base {
+  html,
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+  body {
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+  ::selection {
+    background: var(--accent-soft-2);
+  }
+}
+
+/* Material Symbols ligature icon. */
+.sym {
+  font-family: "Material Symbols Rounded";
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  width: 1em;
+  overflow: hidden;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  font-feature-settings: "liga";
+}
+
+.pixel {
+  image-rendering: pixelated;
+}

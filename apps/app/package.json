@@ -1,0 +1,38 @@
+{
+  "name": "@pr-bunny/app",
+  "version": "0.1.0",
+  "codename": "Alfalfa",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "bunny": "bin/bunny.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "bun-plugin-tailwind": "^0.1.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwindcss": "^4.3.3",
+    "@pr-bunny/brand": "workspace:*",
+    "@pr-bunny/icons": "workspace:*"
+  },
+  "scripts": {
+    "setup": "bun bin/bunny.ts setup",
+    "dev": "bun ../../scripts/generate.ts && bun --hot src/server/index.ts",
+    "start": "bun ../../scripts/generate.ts && NODE_ENV=production bun src/server/index.ts",
+    "typecheck": "bun ../../scripts/generate.ts >/dev/null && tsc --noEmit",
+    "test": "bun test",
+    "build": "bun scripts/build.ts",
+    "service:install": "bun bin/bunny.ts service install",
+    "service:uninstall": "bun bin/bunny.ts service uninstall",
+    "service:restart": "bun bin/bunny.ts service restart",
+    "service:status": "bun bin/bunny.ts service status"
+  }
+}

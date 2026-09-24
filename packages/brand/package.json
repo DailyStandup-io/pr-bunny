@@ -1,0 +1,13 @@
+{
+  "name": "@pr-bunny/brand",
+  "version": "0.0.0",
+  "private": true,
+  "description": "PR Bunny's art. The bunny faces and favicons are licensed and never committed: put them in private/ (see scripts/generate.ts). The DailyStandup.io mark and the theme icons are public.",
+  "exports": {
+    ".": "./index.ts",
+    "./*": "./*"
+  },
+  "scripts": {
+    "generate": "bun scripts/generate.ts"
+  }
+}

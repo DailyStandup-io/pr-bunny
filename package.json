@@ -1,0 +1,19 @@
+{
+  "name": "pr-bunny-monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd apps/app dev",
+    "dev:web": "bun run --cwd apps/web dev",
+    "setup": "bun run --cwd apps/app setup",
+    "build": "bun run --cwd apps/app build",
+    "build:web": "bun run --cwd apps/web build",
+    "test": "bun run --cwd apps/app test",
+    "typecheck": "bun run --cwd apps/app typecheck && bun run --cwd apps/web typecheck",
+    "postinstall": "bun scripts/generate.ts",
+    "icons:pro": "bun packages/icons/scripts/pro.ts"
+  }
+}

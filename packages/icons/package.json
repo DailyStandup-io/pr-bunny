@@ -1,0 +1,24 @@
+{
+  "name": "@pr-bunny/icons",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Hugeicons PR Bunny uses. Free icons by default; `bun run icons:pro` swaps in Hugeicons Pro locally (needs HUGEICONS_TOKEN), without touching package.json or bun.lock.",
+  "exports": {
+    ".": "./index.tsx"
+  },
+  "scripts": {
+    "generate": "bun scripts/generate.ts",
+    "pro": "bun scripts/pro.ts"
+  },
+  "dependencies": {
+    "@hugeicons/core-free-icons": "^4.3.5",
+    "@hugeicons/react": "^1.1.10"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19"
+  }
+}

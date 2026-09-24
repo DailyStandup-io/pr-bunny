@@ -1,0 +1,16 @@
+# Serves PR Bunny at https://prbunny.localhost (override with PR_BUNNY_DOMAIN).
+# Optional (`bunny setup --https`). bunny writes this file to the data folder and runs it as a launchd
+# agent; by hand: caddy run --config Caddyfile
+{
+	# Installing the local CA needs sudo; do it once by hand with `caddy trust`.
+	skip_install_trust
+	admin localhost:2020
+}
+
+{$PR_BUNNY_DOMAIN:prbunny.localhost} {
+	tls internal
+	encode zstd gzip
+	# WebSockets (live progress) are proxied automatically. The Host header is passed through,
+	# which is what the app's host/origin guard checks.
+	reverse_proxy 127.0.0.1:{$PORT:4477}
+}

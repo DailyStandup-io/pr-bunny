@@ -1,0 +1,5 @@
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+
+[test]
+preload = ["./src/server/test-setup.ts"]

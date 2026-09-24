@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "pr-bunny", "runtimeExecutable": "bun", "runtimeArgs": ["run", "dev"], "port": 4477, "url": "http://127.0.0.1:4477" },
+    { "name": "web", "runtimeExecutable": "bun", "runtimeArgs": ["run", "dev:web"], "port": 4478, "url": "http://localhost:4478" }
+  ]
+}
