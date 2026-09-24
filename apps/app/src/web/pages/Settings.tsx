@@ -511,7 +511,7 @@ function About() {
           </a>{" "}
           · © 2026 DailyStandup.io
         </p>
-        <a href="https://github.com/DailyStandup-io" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[13px] text-fg-2 hover:text-fg">
+        <a href="https://github.com/DailyStandup-io/pr-bunny" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[13px] text-fg-2 hover:text-fg">
           <Sym name="open_in_new" size={16} />
           GitHub
         </a>

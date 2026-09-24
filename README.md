@@ -219,4 +219,4 @@ matches the build. Use the `release` skill (`.claude/skills/release`) to cut one
 
 ---
 
-Built by [DailyStandup.io](https://dailystandup.io) · [GitHub](https://github.com/DailyStandup-io)
+Built by [DailyStandup.io](https://dailystandup.io) · [GitHub](https://github.com/DailyStandup-io/pr-bunny)

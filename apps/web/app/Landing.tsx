@@ -6,7 +6,7 @@ import dailyStandup from "@pr-bunny/brand/dailystandup.svg";
 import { Icon } from "@pr-bunny/icons";
 
 const INSTALL = "curl -fsSL https://prbunny.dev/install | sh";
-const GITHUB = "https://github.com/DailyStandup-io";
+const GITHUB = "https://github.com/DailyStandup-io/pr-bunny";
 
 /**
  * bunny-1 … bunny-10, with what each face means. Null in builds without the art (it's licensed and

@@ -414,7 +414,7 @@ function Frame({ theme, onTheme, face, children }: { theme: "light" | "dark"; on
             </a>
           </span>
           <span>·</span>
-          <a href="https://github.com/DailyStandup-io" target="_blank" rel="noreferrer" className="text-fg-2 hover:underline">
+          <a href="https://github.com/DailyStandup-io/pr-bunny" target="_blank" rel="noreferrer" className="text-fg-2 hover:underline">
             GitHub
           </a>
         </footer>
