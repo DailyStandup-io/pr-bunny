@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -60,7 +61,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..24,400,0..1,0&icon_names=check,check_circle,content_copy&display=block"
         />
       </head>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        {children}
+        {/* Vercel Web Analytics: page views only, no cookies. */}
+        <Analytics />
+      </body>
     </html>
   );
 }

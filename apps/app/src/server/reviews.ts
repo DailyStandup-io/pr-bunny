@@ -22,7 +22,7 @@ import { DATA_DIR, RECON_DIFF_CHAR_LIMIT } from "./config";
 import { getSettings } from "./settings";
 import { db } from "./db/db";
 import { readLines } from "./git";
-import { listOpenPrs, parsePrRef, prDiff, prView, type PrRef } from "./gh";
+import { listOpenPrs, parsePrRef, prDiff, prView, viewer, type PrRef } from "./gh";
 import { emit, recentProgress } from "./live";
 import { RECON_SCHEMA, RECON_SELF_SCHEMA, RECON_SELF_SYSTEM, RECON_SYSTEM, reconPrompt } from "./prompts/recon";
 import { findStack } from "./stack";
@@ -321,6 +321,12 @@ export async function startReview(input: string, defaultRepo?: string): Promise<
   const ref = parsePrRef(input, defaultRepo || lastRepo());
   const pr = await prView(ref);
 
+  // Your own PR: that's a self-review (findings stay private, "Open PR"/re-run flow), not a peer review.
+  if (isMine(pr.author, await viewer().catch(() => null))) {
+    const { startSelfReview } = await import("./self"); // self.ts imports this module
+    return (await startSelfReview({ repo: `${ref.owner}/${ref.repo}`, pr: pr.number })).id;
+  }
+
   const existing = latestReviewFor(`${ref.owner}/${ref.repo}`, pr.number);
   if (existing && existing.headSha === pr.headRefOid && existing.phase !== "failed") return existing.id;
 
@@ -328,6 +334,10 @@ export async function startReview(input: string, defaultRepo?: string): Promise<
   runRecon(id, ref, pr).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
   return id;
 }
+
+/** Is a PR's author the signed-in gh user? GitHub logins are case-insensitive. */
+export const isMine = (author: string | null | undefined, me: string | null | undefined) =>
+  Boolean(author && me && author.toLowerCase() === me.toLowerCase());
 
 export function insertReview(ref: PrRef, pr: Awaited<ReturnType<typeof prView>>, phase: Phase, parentReviewId: number | null = null): number {
   const repoId = upsertRepo(ref.owner, ref.repo);

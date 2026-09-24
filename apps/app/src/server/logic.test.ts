@@ -274,3 +274,12 @@ describe("codex", () => {
     }
   });
 });
+
+describe("isMine", () => {
+  test("your own PR, whatever the case of the login", async () => {
+    const { isMine } = await import("./reviews");
+    expect(isMine("KieranCrown", "kierancrown")).toBe(true);
+    expect(isMine("someone-else", "kierancrown")).toBe(false);
+    expect(isMine("kierancrown", null)).toBe(false); // gh unavailable: treat as someone else's
+  });
+});

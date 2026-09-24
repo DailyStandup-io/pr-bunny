@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 “Clover” — 2026-09-24
+
+### Changed
+- Opening one of your own PRs (pasting its URL, or from the inbox or search) now starts a
+  self-review instead of reviewing it as someone else's: findings stay private, with the Fix /
+  Won't fix and re-run flow.
+- The Analytics icon and the theme toggle use the same light outline style as the rest of the rail.
+
 ## 0.1.1 “Basil” — 2026-09-24
 
 ### Changed
