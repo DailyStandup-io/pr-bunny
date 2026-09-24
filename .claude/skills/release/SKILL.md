@@ -40,7 +40,9 @@ The code is public (MIT). The bunny art ships inside the binary, which is fine, 
 
 0. **Have the bunny art.** It's licensed and gitignored, so it has to be in
    `packages/brand/private/` on this machine (13 files, see `packages/brand/README.md`). The build
-   refuses to run without it. If it's missing, ask the user for it. Don't work around the check.
+   refuses to run without it. If it's missing, run `bun run art:fetch` (it reads the private
+   `DailyStandup-io/pr-bunny-art` repo with the user's `gh` login). If that fails, ask the user.
+   Don't work around the check.
    Official releases also use Hugeicons Pro: check `bun run icons:pro status`, and if it's not
    installed, run `bun run icons:pro` (needs `HUGEICONS_TOKEN`). The build prints which icon set
    it used.

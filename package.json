@@ -14,6 +14,7 @@
     "test": "bun run --cwd apps/app test",
     "typecheck": "bun run --cwd apps/app typecheck && bun run --cwd apps/web typecheck",
     "postinstall": "bun scripts/generate.ts",
-    "icons:pro": "bun packages/icons/scripts/pro.ts"
+    "icons:pro": "bun packages/icons/scripts/pro.ts",
+    "art:fetch": "bun packages/brand/scripts/fetch-art.ts"
   }
 }
