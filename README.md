@@ -35,7 +35,7 @@ bun run icons:pro    # optional: Hugeicons Pro instead of free (needs HUGEICONS_
 so they're gitignored (`packages/brand/private/`). Without them everything still builds and runs;
 the bunny images are just left out. Release builds need them. See
 [packages/brand/README.md](packages/brand/README.md). The code is [MIT](LICENSE); the name, the bunny
-and the DailyStandup.io mark aren't covered by it.
+and the DailyStandup.io mark aren't covered by it (see [NOTICE](NOTICE)).
 
 ## Install
 

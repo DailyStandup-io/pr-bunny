@@ -1,0 +1,12 @@
+PR Bunny
+Copyright (c) 2026 DailyStandup.io
+
+The code in this repository is licensed under the MIT License (see LICENSE).
+
+Not covered by the MIT License:
+- the "PR Bunny" name and the bunny character art
+- the DailyStandup.io name and mark
+- third-party logos: Anthropic's Claude mark, and OpenAI's Blossom (from cdn.openai.com/brand)
+
+The bunny art is licensed from Envato Elements for PR Bunny only and isn't in this repository;
+builds without it simply leave the images out. See packages/brand/README.md.

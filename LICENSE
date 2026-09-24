@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Not covered by this license: the "PR Bunny" name and the bunny character art, the DailyStandup.io
-name and mark, and third-party logos (Anthropic's Claude mark, OpenAI's Blossom from cdn.openai.com/brand). The bunny art is licensed from Envato
-Elements for PR Bunny only and isn't in this repository; builds without it simply leave the images
-out. See packages/brand/README.md.
