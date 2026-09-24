@@ -1,6 +1,8 @@
 # @pr-bunny/web
 
-The prbunny.dev landing page (Next.js 16, run with Bun). From the repo root:
+The prbunny.dev landing page (Next.js 16). Bun installs and runs the scripts. `next dev` runs on Bun's
+runtime, but `next build` runs on Node, because Bun 1.3.14 crashes at the end of `next build` on
+Vercel's Linux builders. From the repo root:
 
 ```bash
 bun run dev:web     # http://localhost:4478
