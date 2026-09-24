@@ -31,7 +31,9 @@ const INSTALLER = join(ROOT, "scripts", "install.sh");
 /** Release targets. Adding one here means install.sh must map `uname` to it (checked below). */
 export const TARGETS = [
   { os: "darwin", arch: "arm64", bun: "bun-darwin-arm64" },
-  { os: "darwin", arch: "x64", bun: "bun-darwin-x64" },
+  // Baseline: runs on every Intel Mac and under Rosetta. (For Bun 1.3.14 the darwin baseline and
+  // default x64 runtimes are identical; its "CPU lacks AVX" warning under Rosetta is spurious.)
+  { os: "darwin", arch: "x64", bun: "bun-darwin-x64-baseline" },
 ] as const;
 const assetName = (t: (typeof TARGETS)[number]) => `bunny-${t.os}-${t.arch}`;
 
