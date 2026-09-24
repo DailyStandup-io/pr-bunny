@@ -133,9 +133,9 @@ const latestSelfReview = (repo: string, where: string, arg: string | number) => 
   return db
     .query(
       `SELECT v.id, v.phase, v.run_number AS runNumber,
-              (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id) AS findingsTotal,
-              (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.decision IS NULL) AS findingsUndecided,
-              (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.resolved_run IS NULL AND COALESCE(f.decision, '') != 'dismissed') AS findingsOpen,
+              (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL) AS findingsTotal,
+              (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision IS NULL) AS findingsUndecided,
+              (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.resolved_run IS NULL AND COALESCE(f.decision, '') != 'dismissed') AS findingsOpen,
               v.opened_pr_number AS openedPrNumber
        FROM reviews v JOIN repos r ON r.id = v.repo_id
        WHERE r.owner = ? AND r.name = ? AND v.mode = 'self' AND ${where} ORDER BY v.id DESC LIMIT 1`,

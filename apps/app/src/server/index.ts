@@ -1,4 +1,5 @@
 import type { BunRequest, Server } from "bun";
+import type { ReviewEvent } from "../shared/types";
 import index from "../web/index.html";
 import { approve, ask, askPr, buildSubmission, decide, editComment, startRereview, stats, status, submit } from "./actions";
 import { DOMAIN, HOST, PORT, publicUrl } from "./config";
@@ -10,6 +11,23 @@ import { cancelDeepReview, continueDeepReview, isReviewRunning, rerunSelfReview,
 import { selfSources } from "./local";
 import { checkoutFor, completeSetup, pickFolder, resolveRepo, setupChecks, setupLinkCli, setupRepos, setupState } from "./onboarding";
 import { checkForUpdate, installUpdate, restartForUpdate, scheduleUpdateChecks, updateState } from "./update";
+import {
+  decideStackFinding,
+  editStackComment,
+  getStack,
+  listStacks,
+  openStack,
+  postStack,
+  rereviewChanged,
+  rerunCross,
+  setLayerEvent,
+  setRunState,
+  setSummary,
+  skipLayer,
+  stackSubmission,
+  startLayer,
+  startStackRunner,
+} from "./stacks";
 import { previewSkill, repoSkills, searchFiles } from "./skills";
 import { findSelfReview, openPrFor, startSelfReview, suggestReviewers, type StartSelf } from "./self";
 import { getInbox, repoPrs, searchPrs } from "./inbox";
@@ -18,6 +36,7 @@ import { activeRuns, continueRecon, getReview, getRow, lastStoppedRun, listRevie
 
 recoverInterrupted();
 scheduleUpdateChecks();
+startStackRunner();
 
 // Remove posted/abandoned PR checkouts now and hourly (see cleanup.ts for the rules).
 const runCleanup = () => cleanupWorktrees({ isRunning: isReviewRunning }).catch((e) => console.warn("cleanup failed:", e));
@@ -68,6 +87,7 @@ const server = Bun.serve<{ reviewId: number }>({
     "/": index,
     "/review": index,
     "/review/*": index,
+    "/stack/*": index,
     "/history": index,
     "/analytics": index,
     "/settings": index,
@@ -138,6 +158,79 @@ const server = Bun.serve<{ reviewId: number }>({
       GET: api(async (req) => {
         const q = new URL(req.url).searchParams;
         return previewSkill((await checkoutFor(q.get("path"))).root, q.get("file") ?? "");
+      }),
+    },
+
+    // ---------- stacks ----------
+    "/api/stacks": {
+      GET: api(() => listStacks()),
+      // { pr, repo } or { localPath, branch } (the CLI); `reviewAll` starts Review all straight away.
+      POST: api(async (req) => {
+        const input = await body<{ pr?: string | number; repo?: string; localPath?: string; branch?: string; reviewAll?: boolean }>(req);
+        const id = await openStack(input);
+        if (input.reviewAll) setRunState(id, "running");
+        return json({ id }, 201);
+      }),
+    },
+    "/api/stacks/:id": { GET: api((req: R<"/api/stacks/:id">) => getStack(Number(req.params.id))) },
+    "/api/stacks/:id/run": {
+      POST: api(async (req: R<"/api/stacks/:id/run">) => {
+        const { state } = await body<{ state?: "running" | "paused" | "idle" }>(req);
+        if (state !== "running" && state !== "paused" && state !== "idle") throw new Error("Expected state running, paused or idle");
+        setRunState(Number(req.params.id), state);
+        return getStack(Number(req.params.id));
+      }),
+    },
+    "/api/stacks/:id/layers/:pr/start": {
+      POST: api(async (req: R<"/api/stacks/:id/layers/:pr/start">) => ({ reviewId: await startLayer(Number(req.params.id), Number(req.params.pr)) })),
+    },
+    "/api/stacks/:id/layers/:pr/skip": {
+      POST: api(async (req: R<"/api/stacks/:id/layers/:pr/skip">) => {
+        skipLayer(Number(req.params.id), Number(req.params.pr), Boolean((await body<{ skip?: boolean }>(req)).skip));
+        return getStack(Number(req.params.id));
+      }),
+    },
+    "/api/stacks/:id/layers/:pr/event": {
+      POST: api(async (req: R<"/api/stacks/:id/layers/:pr/event">) => {
+        setLayerEvent(Number(req.params.id), Number(req.params.pr), (await body<{ event?: ReviewEvent | null }>(req)).event ?? null);
+        return stackSubmission(Number(req.params.id));
+      }),
+    },
+    "/api/stacks/:id/rereview": {
+      POST: api(async (req: R<"/api/stacks/:id/rereview">) => ({ started: await rereviewChanged(Number(req.params.id)) })),
+    },
+    "/api/stacks/:id/cross": {
+      POST: api((req: R<"/api/stacks/:id/cross">) => {
+        rerunCross(Number(req.params.id));
+        return { ok: true };
+      }),
+    },
+    "/api/stacks/:id/submission": {
+      GET: api((req: R<"/api/stacks/:id/submission">) => stackSubmission(Number(req.params.id))),
+    },
+    "/api/stacks/:id/summary": {
+      POST: api(async (req: R<"/api/stacks/:id/summary">) => {
+        const { on, text } = await body<{ on?: boolean; text?: string | null }>(req);
+        setSummary(Number(req.params.id), Boolean(on), typeof text === "string" ? text : null);
+        return { ok: true };
+      }),
+    },
+    // GitHub writes: one review per PR, only from the confirmed "Post" click.
+    "/api/stacks/:id/post": {
+      POST: api((req: R<"/api/stacks/:id/post">) => postStack(Number(req.params.id))),
+    },
+    "/api/stack-findings/:id/decision": {
+      POST: api(async (req: R<"/api/stack-findings/:id/decision">) => {
+        const { decision, soft, reason } = await body<{ decision: "accepted" | "dismissed" | null; soft?: boolean; reason?: string }>(req);
+        if (decision !== null && decision !== "accepted" && decision !== "dismissed") throw new Error("Invalid decision");
+        decideStackFinding(Number(req.params.id), decision, { soft, reason });
+        return { ok: true };
+      }),
+    },
+    "/api/stack-findings/placements/:id/comment": {
+      POST: api(async (req: R<"/api/stack-findings/placements/:id/comment">) => {
+        editStackComment(Number(req.params.id), (await body<{ comment?: string }>(req)).comment ?? "");
+        return { ok: true };
       }),
     },
 

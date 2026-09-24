@@ -31,6 +31,12 @@ export interface OpenPr {
   title: string;
   headRefName: string;
   baseRefName: string;
+  headRefOid?: string;
+  author?: string;
+  additions?: number;
+  deletions?: number;
+  isDraft?: boolean;
+  url?: string;
 }
 
 /**
@@ -78,10 +84,11 @@ export async function prDiff({ owner, repo, number }: PrRef): Promise<string> {
 }
 
 export async function listOpenPrs(owner: string, repo: string): Promise<OpenPr[]> {
-  return ghJson<OpenPr[]>([
+  const raw = await ghJson<any[]>([
     "pr", "list", "-R", `${owner}/${repo}`, "--state", "open", "--limit", "300",
-    "--json", "number,title,headRefName,baseRefName",
+    "--json", "number,title,headRefName,baseRefName,headRefOid,author,additions,deletions,isDraft,url",
   ]);
+  return raw.map((p) => ({ ...p, author: p.author?.login ?? "unknown" }));
 }
 
 const INBOX_FIELDS = "number,title,author,url,updatedAt,isDraft";

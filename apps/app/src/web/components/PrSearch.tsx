@@ -12,6 +12,7 @@ interface AcItem {
   meta: string;
   tag?: string;
   go: () => void;
+  stack?: { repo: string; pr: number; pos: number; size: number };
 }
 
 const short = (repo: string) => repo.split("/")[1] ?? repo;
@@ -107,6 +108,7 @@ export function PrSearch({
       meta: `${withRepo ? `${short(p.repo)} · ` : ""}${p.author} · ${timeAgo(p.updatedAt)}${p.isDraft ? " · Draft" : ""}`,
       tag: p.review ? PHASE_LABEL[p.review.phase] : undefined,
       go: () => openPr(p),
+      stack: p.stack ? { repo: p.repo, pr: p.number, ...p.stack } : undefined,
     });
     const add = (label: string, items: AcItem[]) => {
       if (items.length) out.push({ label, count: items.length > cap ? `${cap} of ${items.length}` : "", items: items.slice(0, cap) });
@@ -219,6 +221,22 @@ export function PrSearch({
                             <span className="truncate text-[14px] font-medium">{it.title}</span>
                             <span className="truncate text-[12px] text-fg-3">{it.meta}</span>
                           </span>
+                          {it.stack && (
+                            <span
+                              role="button"
+                              title="Review the whole stack"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const st = it.stack!;
+                                api.openStack(`${st.repo}#${st.pr}`).then(({ id }) => navigate(`/stack/${id}`), () => {});
+                              }}
+                              className="inline-flex h-[26px] flex-none cursor-pointer items-center gap-1 rounded-md border border-line-strong bg-surface px-[9px] text-[12px] font-medium whitespace-nowrap text-fg-2 hover:border-accent hover:text-accent"
+                            >
+                              <Sym name="stacks" size={14} />
+                              Review stack · {it.stack.pos} of {it.stack.size}
+                            </span>
+                          )}
                           {it.tag && <span className="flex-none rounded-full bg-accent-soft px-[9px] py-0.5 text-[12px] font-medium text-accent">{it.tag}</span>}
                           {on && <Sym name="keyboard_return" className="text-fg-3" />}
                         </button>

@@ -26,6 +26,7 @@ interface FindingRow {
   decision: string | null;
   qa_session_id: string | null;
   posted: number;
+  soft: number;
 }
 
 function findingRow(id: number): FindingRow {
@@ -212,7 +213,7 @@ export function buildSubmission(reviewId: number): Submission {
   const row = getRow(reviewId);
   if (!row) throw new Error("Review not found");
   const findings = db
-    .query("SELECT * FROM findings WHERE review_id = ? ORDER BY position")
+    .query("SELECT * FROM findings WHERE review_id = ? AND superseded_by IS NULL ORDER BY position")
     .all(reviewId) as FindingRow[];
   const accepted = findings.filter((f) => f.decision === "accepted");
   const inline = accepted.filter((f) => f.anchorable && f.path && f.line && f.side);
@@ -224,7 +225,7 @@ export function buildSubmission(reviewId: number): Submission {
     line: f.line!,
     startLine: f.start_line,
     side: f.side!,
-    body: `**[${SEVERITY_LABEL[f.severity]}]** ${f.comment}`,
+    body: `**[${f.soft ? "Heads-up" : SEVERITY_LABEL[f.severity]}]** ${f.comment}`,
   }));
 
   let body = row.review_summary?.trim() ?? "";
@@ -236,7 +237,8 @@ export function buildSubmission(reviewId: number): Submission {
     body += `${body ? "\n\n" : ""}### Other notes\n${items.join("\n")}`;
   }
 
-  const worst = accepted.map((f) => f.severity);
+  // A heads-up (soft) comment is posted but never asks for changes on its own.
+  const worst = accepted.filter((f) => !f.soft).map((f) => f.severity);
   const suggestedEvent: ReviewEvent = worst.some((s) => s === "critical" || s === "high")
     ? "REQUEST_CHANGES"
     : accepted.length === 0 && row.phase !== "submitted"

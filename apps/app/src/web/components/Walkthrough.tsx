@@ -18,8 +18,8 @@ const VERDICT: Record<NonNullable<ReviewDetail["verdict"]>, { text: string; cls:
   address_before_merge: { text: "Address before merge", cls: "bg-del-soft text-del" },
 };
 
-const DISMISS_REASONS = ["False positive", "Handled elsewhere", "Not worth raising", "Out of scope for this PR", "Intentional"];
-const SELF_REASONS = ["Intentional", "Follow-up PR", "False positive", "Will squash on merge", "Not worth it"];
+export const DISMISS_REASONS = ["False positive", "Handled elsewhere", "Not worth raising", "Out of scope for this PR", "Intentional"];
+export const SELF_REASONS = ["Intentional", "Follow-up PR", "False positive", "Will squash on merge", "Not worth it"];
 
 const location = (f: Finding) => `${f.path}${f.line ? `:${f.startLine ? `${f.startLine}-` : ""}${f.line}` : ""}`;
 
@@ -585,7 +585,7 @@ function DecisionButton(props: {
   );
 }
 
-function Snippet({ lines }: { lines: SnippetLine[] }) {
+export function Snippet({ lines }: { lines: SnippetLine[] }) {
   return (
     <div className="overflow-x-auto border-y border-line bg-code py-2 font-mono text-[12.5px] leading-[1.75]">
       {lines.map((l, i) =>

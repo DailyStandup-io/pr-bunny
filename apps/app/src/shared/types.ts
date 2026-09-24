@@ -145,6 +145,10 @@ export interface Finding {
   resolvedRun: number | null;
   stillOpenRun: number | null;
   stillNote: string | null;
+  /** Placed here by a stack's "across the stack" pass. */
+  stackFindingId: number | null;
+  /** Accepted as a heads-up: posted, but doesn't count towards requesting changes. */
+  soft: boolean;
 }
 
 export interface ReviewerQuestion {
@@ -250,6 +254,8 @@ export interface InboxPr {
 
 /** An inbox PR plus the latest local review of it, if any. */
 export type InboxEntry = InboxPr & {
+  /** Set when the PR is part of a stack of open PRs. */
+  stack?: StackBadge | null;
   review: { id: number; phase: Phase; headSha: string } | null;
   /** Who asked for your review, and when (assigned PRs only; null if GitHub didn't say). */
   requestedBy?: string | null;
@@ -395,6 +401,14 @@ export interface Settings {
   reviewMaxTurns: number;
   /** Turn cap for the overview. It uses no tools, so turns are only for retrying its answer. */
   reconMaxTurns: number;
+  /** Stacks: which end Review all starts from. */
+  stackOrder: "base" | "top";
+  /** Stacks: deep reviews in parallel during Review all (1–3). */
+  stackConcurrency: number;
+  /** Stacks: Review all is offered for stacks this size or smaller. */
+  stackMaxAll: number;
+  /** Stacks: include layers already approved, merged or reviewed by you. */
+  stackIncludeDone: boolean;
 }
 
 export interface ModelOption {
@@ -529,4 +543,131 @@ export interface SetupInput {
   replaceCli?: boolean;
   /** `reviewSkill`: a file path from the repo's skill list, or null for generic criteria. */
   repos: Array<{ path: string; reviewSkill: string | null }>;
+}
+
+// ---------- stacks ----------
+
+export type LayerState =
+  | "waiting"
+  | "scanning"
+  | "readable"
+  | "reviewing"
+  | "decide"
+  | "submitted"
+  | "approved"
+  | "failed"
+  | "changed"
+  | "merged"
+  | "skipped";
+
+export interface StackLayer {
+  pr: number;
+  title: string;
+  author: string;
+  headRef: string;
+  baseRef: string;
+  /** The PR this one is based on; null when it's on the base branch. */
+  parentPr: number | null;
+  /** 1 = on the base branch. */
+  depth: number;
+  additions: number;
+  deletions: number;
+  isDraft: boolean;
+  url: string;
+  /** Your own PR: reviewed as a self-review, never posted. */
+  mine: boolean;
+  state: LayerState;
+  reviewId: number | null;
+  /** Finding counts from this layer's own review (superseded ones left out). */
+  counts: Record<Severity, number>;
+  total: number;
+  decided: number;
+  /** Stack findings that involve this layer. */
+  across: number;
+  summary: string | null;
+  /** Why it's changed / merged / failed, in a sentence. */
+  note: string | null;
+  /** The latest progress line while it's running. */
+  line: { text: string; at: number } | null;
+  startedAt: string | null;
+  skipped: boolean;
+}
+
+export type StackFindingKind = "relies" | "repeated" | "fixed" | "breaks";
+
+export interface StackFinding {
+  id: number;
+  kind: StackFindingKind;
+  severity: Severity;
+  lens: string | null;
+  title: string;
+  why: string;
+  fix: string | null;
+  fixedNote: string | null;
+  fixedIn: number | null;
+  /** Every PR it involves, base first. */
+  prs: number[];
+  confidence: "high" | "medium" | "low" | null;
+  agentPrompt: string | null;
+  /** Where it's posted: one finding per PR, decided together. */
+  placements: Array<{ pr: number; findingId: number; reviewId: number; path: string | null; line: number | null; comment: string }>;
+  decision: "accepted" | "dismissed" | null;
+  dismissReason: string | null;
+  soft: boolean;
+}
+
+export interface StackDetail {
+  id: number;
+  repo: string;
+  baseRef: string;
+  title: string;
+  /** Layers in stack order: base first, children after their parent. */
+  layers: StackLayer[];
+  runState: "idle" | "running" | "paused";
+  cross: { state: "pending" | "running" | "done" | "failed"; error: string | null; findings: StackFinding[]; lines: Array<{ text: string; at: number }> };
+  /** Review all is offered for stacks this size or smaller (Settings › Stacks). */
+  maxAll: number;
+  order: "base" | "top";
+  concurrency: number;
+  /** Rough minutes left for the layers still to review. */
+  minutesLeft: number | null;
+  postedAt: string | null;
+  summaryOn: boolean;
+  summaryText: string;
+  updatedAt: string;
+}
+
+export interface StackSummary {
+  id: number;
+  repo: string;
+  title: string;
+  baseRef: string;
+  topRef: string;
+  size: number;
+  states: LayerState[];
+  runState: StackDetail["runState"];
+  running: boolean;
+  /** "3 PRs ready to post", "Reviewing #1482 (2 of 5)"… */
+  detail: string;
+  updatedAt: string;
+}
+
+export interface StackSubmissionLayer {
+  pr: number;
+  reviewId: number;
+  mine: boolean;
+  /** Can be posted now (peer review with a finished deep review, not posted yet). */
+  canPost: boolean;
+  suggestedEvent: ReviewEvent;
+  event: ReviewEvent;
+  comments: number;
+  undecided: number;
+  /** Self-review: findings still to fix. */
+  openFindings: number;
+}
+
+/** Where a PR sits in its stack, for badges ("2 of 5"). */
+export interface StackBadge {
+  pos: number;
+  size: number;
 }

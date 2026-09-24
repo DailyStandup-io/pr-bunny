@@ -117,7 +117,7 @@ export function Review({ id }: { id: number }) {
                   {t.done ? (
                     <Sym name="check" size={15} />
                   ) : t.loading ? (
-                    <span className="rp-spin inline-block size-3 rounded-full border-2 border-[color-mix(in_oklch,var(--on-accent)_35%,transparent)] border-t-on-accent" />
+                    <span className="pb-spin inline-block size-3 rounded-full border-2 border-[color-mix(in_oklch,var(--on-accent)_35%,transparent)] border-t-on-accent" />
                   ) : (
                     i + 1
                   )}

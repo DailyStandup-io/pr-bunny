@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0 “Dandelion” — 2026-09-24
+
+### Added
+- **Stack review.** Review a whole stack of PRs together: open it from a stacked PR's Overview, the
+  inbox and search ("Review stack · 2 of 5"), Review home, or `bunny review --stack`.
+  - **Review all** scans and deep-reviews every layer against its own parent, base first (or top
+    first), up to 3 at a time. Pause and resume any time.
+  - **Across the stack:** once every layer is reviewed, it looks for what only shows up when they're
+    read together: one PR relying on another, problems fixed later in the stack, the same issue in
+    several layers (merged into one), and layers that clash.
+  - One findings queue for the whole stack, and one GitHub review per PR, with suggested outcomes
+    and an optional summary comment on the top PR. Your own layers are self-reviewed and never
+    posted.
+  - Spots new commits and rebases, and re-reviews just the layers that changed.
+- Settings › Review › Stacks: review order, PRs at once, the Review all limit, and whether to include
+  approved or merged PRs.
+
+### Fixed
+- Finishing setup and pressing "Open Inbox" no longer bounces back to setup the first time.
+- The review page's tab spinner animates again.
+- GitHub links go to the pr-bunny repo.
+
 ## 0.1.2 “Clover” — 2026-09-24
 
 ### Changed

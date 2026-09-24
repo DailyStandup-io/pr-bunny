@@ -7,10 +7,11 @@
 //   bunny review --pr <n>        self-review your PR #n in this repo
 //   bunny review --rerun         re-run this branch's self-review after fixing
 //   bunny review --no-open       print the link instead of opening it
+//   bunny review --stack         review the whole stack this branch's PR is in (Review all)
 const PORT = Number(process.env.PORT ?? 4477);
 const API = `http://127.0.0.1:${PORT}`;
 
-const USAGE = `usage: bunny review [branch] [--base <branch>] [--committed] [--pr <number>] [--rerun] [--no-open]
+const USAGE = `usage: bunny review [branch] [--base <branch>] [--committed] [--pr <number>] [--rerun] [--stack] [--no-open]
 
 Self-reviews your work in PR Bunny before anyone else sees it. Run it inside a checkout.`;
 
@@ -35,7 +36,7 @@ export async function review(rest: string[]) {
     console.log(USAGE);
     return;
   }
-  const opts: { branch?: string; base?: string; committed: boolean; pr?: number; rerun: boolean; open: boolean } = { committed: false, rerun: false, open: true };
+  const opts: { branch?: string; base?: string; committed: boolean; pr?: number; rerun: boolean; stack: boolean; open: boolean } = { committed: false, rerun: false, stack: false, open: true };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     const value = () => rest[++i] ?? fail(`${a} needs a value.`);
@@ -46,6 +47,7 @@ export async function review(rest: string[]) {
       opts.pr = n;
     } else if (a === "--committed") opts.committed = true;
     else if (a === "--rerun") opts.rerun = true;
+    else if (a === "--stack") opts.stack = true;
     else if (a === "--no-open") opts.open = false;
     else if (a.startsWith("-")) fail(`unknown option ${a}.\n\n${USAGE}`);
     else if (!opts.branch) opts.branch = a;
@@ -65,6 +67,13 @@ export async function review(rest: string[]) {
   }
 
   const localPath = process.cwd();
+  if (opts.stack) {
+    const { id } = await post("/api/stacks", opts.pr ? { pr: opts.pr, ...(await repoOf(localPath)), reviewAll: true } : { localPath, branch: opts.branch, reviewAll: true });
+    const url = `${(await health()).url}/stack/${id}`;
+    console.log(`Reviewing the whole stack → ${url}`);
+    if (opts.open) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+    return;
+  }
   const out = opts.rerun
     ? await post("/api/self-reviews/rerun", { localPath, branch: opts.branch })
     : await post("/api/self-reviews", { localPath, branch: opts.branch, base: opts.base, includeDirty: !opts.committed, pr: opts.pr });
@@ -73,4 +82,12 @@ export async function review(rest: string[]) {
   console.log(opts.rerun ? `Re-running → ${url}` : out.reused ? `Already reviewed; opening it → ${url}` : `Self-review started → ${url}`);
   if (out.reused && !opts.rerun) console.log("After fixing, run `bunny review --rerun` to check again.");
   if (opts.open) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+}
+
+/** owner/name of the checkout at `path`, from its origin remote. */
+async function repoOf(path: string): Promise<{ repo: string }> {
+  const url = (await Bun.$`git remote get-url origin`.cwd(path).quiet().nothrow()).stdout.toString().trim();
+  const m = url.match(/github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i);
+  if (!m) fail("This checkout has no GitHub origin remote.");
+  return { repo: `${m[1]}/${m[2]}` };
 }

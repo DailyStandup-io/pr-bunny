@@ -63,6 +63,10 @@ export const DEFAULTS: Settings = {
   stackContextDepth: 2,
   reviewMaxTurns: 250,
   reconMaxTurns: 10,
+  stackOrder: "base",
+  stackConcurrency: 1,
+  stackMaxAll: 8,
+  stackIncludeDone: false,
 };
 
 let cache: Settings | null = null;
@@ -121,6 +125,13 @@ export function applySettings(base: Settings, patch: Partial<Settings>): Setting
   if (patch.stackContextDepth !== undefined) next.stackContextDepth = int(patch.stackContextDepth, "Stack context depth", 0, 10);
   if (patch.reviewMaxTurns !== undefined) next.reviewMaxTurns = int(patch.reviewMaxTurns, "Review turn limit", 20, 1000);
   if (patch.reconMaxTurns !== undefined) next.reconMaxTurns = int(patch.reconMaxTurns, "Overview turn limit", 2, 100);
+  if (patch.stackOrder !== undefined) {
+    if (patch.stackOrder !== "base" && patch.stackOrder !== "top") throw new Error("Review order must be base or top");
+    next.stackOrder = patch.stackOrder;
+  }
+  if (patch.stackConcurrency !== undefined) next.stackConcurrency = int(patch.stackConcurrency, "PRs at once", 1, 3);
+  if (patch.stackMaxAll !== undefined) next.stackMaxAll = int(patch.stackMaxAll, "Review all limit", 2, 30);
+  if (patch.stackIncludeDone !== undefined) next.stackIncludeDone = Boolean(patch.stackIncludeDone);
   return next;
 }
 

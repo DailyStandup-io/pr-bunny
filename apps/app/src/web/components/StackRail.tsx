@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { api, navigate } from "../api";
 import type { StackPr } from "../../shared/types";
-import { Inline } from "./ui";
+import { Inline, Spinner, Sym } from "./ui";
 
 /** How many PRs to show on each side of the reviewed one before collapsing. */
 const NEIGHBOURS = 2;
@@ -67,6 +68,49 @@ export function StackRail({ stack, self, repo }: { stack: StackPr[]; self: { num
           Collapse
         </button>
       )}
+      <ReviewStackButton repo={repo} pr={self.number} count={stack.length + 1} />
     </div>
+  );
+}
+
+/** Opens the stack review for the stack this PR is in. */
+export function ReviewStackButton({ repo, pr, count, compact = false }: { repo: string; pr: number; count?: number; compact?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBusy(true);
+    setErr(null);
+    try {
+      const { id } = await api.openStack(`${repo}#${pr}`);
+      navigate(`/stack/${id}`);
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : String(x));
+      setBusy(false);
+    }
+  };
+  if (compact)
+    return (
+      <button
+        onClick={go}
+        title={err ?? "Review the whole stack"}
+        className="inline-flex h-[34px] flex-none cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium whitespace-nowrap text-fg hover:border-accent hover:text-accent"
+      >
+        {busy ? <Spinner size={13} /> : <Sym name="stacks" size={16} />}
+        Review stack
+      </button>
+    );
+  return (
+    <>
+      <button
+        onClick={go}
+        disabled={busy}
+        className="mt-4 flex h-10 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface text-[13.5px] font-medium text-fg hover:bg-hover"
+      >
+        {busy ? <Spinner size={14} /> : <Sym name="stacks" size={17} />}
+        Review whole stack{count ? ` (${count} PRs)` : ""}
+      </button>
+      {err && <p className="m-0 mt-2 text-[12.5px] text-del">{err}</p>}
+    </>
   );
 }

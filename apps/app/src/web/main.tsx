@@ -16,6 +16,7 @@ import { Review } from "./pages/Review";
 import { ReviewHome } from "./pages/ReviewHome";
 import { SettingsPage } from "./pages/Settings";
 import { SetupPage } from "./pages/Setup";
+import { StackPage } from "./pages/Stack";
 import { Icon, type IconName } from "@pr-bunny/icons";
 
 /** Inbox icon: a dot while PRs wait on you that you haven't posted a review for, a check when none are assigned. */
@@ -45,7 +46,9 @@ function App() {
   useKonami(() => setInvaders(true), invaders);
   // First launch: nothing is set up yet, so start with the setup page.
   const setup = useAsync(api.setup, []);
-  const needsSetup = setup.data ? !setup.data.completedAt : false;
+  // Set as soon as setup finishes, so "Open Inbox" doesn't bounce back here before the reload lands.
+  const [setupDone, setSetupDone] = useState(false);
+  const needsSetup = !setupDone && (setup.data ? !setup.data.completedAt : false);
   useEffect(() => {
     if (needsSetup && path !== "/setup") navigate("/setup");
   }, [needsSetup, path]);
@@ -57,7 +60,12 @@ function App() {
 
   return (
     <>
-      {path === "/setup" ? <SetupPage onDone={setup.reload} /> : !setup.data && !setup.error ? null : <Shell />}
+      {path === "/setup" ? <SetupPage
+          onDone={() => {
+            setSetupDone(true);
+            setup.reload();
+          }}
+        /> : !setup.data && !setup.error ? null : <Shell />}
       {invaders && <Invaders onClose={closeInvaders} />}
     </>
   );
@@ -72,6 +80,8 @@ function Shell() {
 
   const reviewMatch = path.match(/^\/review\/(\d+)/);
   const reviewId = reviewMatch ? Number(reviewMatch[1]) : null;
+  const stackMatch = path.match(/^\/stack\/(\d+)/);
+  const stackId = stackMatch ? Number(stackMatch[1]) : null;
   const repo = pickedRepo ?? inbox.data?.lastRepo ?? null;
 
   // Keep the inbox (and its nav dot) fresh without hammering GitHub.
@@ -88,7 +98,7 @@ function Shell() {
   const ib = inboxState(inbox.data);
   // Analytics used to be History; old links still land there.
   const analytics = path === "/analytics" || path === "/history";
-  const screen = path.startsWith("/review") ? "review" : analytics ? "analytics" : path === "/settings" ? "settings" : "inbox";
+  const screen = path.startsWith("/review") || path.startsWith("/stack") ? "review" : analytics ? "analytics" : path === "/settings" ? "settings" : "inbox";
   // Runs you aren't looking at: they spin on the rail's Review button.
   const elsewhere = runs.filter((r) => r.reviewId !== reviewId);
   const nav = [
@@ -157,7 +167,9 @@ function Shell() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {reviewId != null ? (
+        {stackId != null ? (
+          <StackPage id={stackId} />
+        ) : reviewId != null ? (
           <Review id={reviewId} />
         ) : path === "/review" ? (
           <ReviewHome inbox={inbox} repo={repo} onRepo={setRepo} runs={runs} />

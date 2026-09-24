@@ -41,7 +41,7 @@ export function recoverInterrupted() {
   db.run("UPDATE reviews SET phase = 'failed', error = ? WHERE phase = 'read'", ["The deep review hasn't run yet. Retry to start it."]);
 }
 
-function upsertRepo(owner: string, name: string): number {
+export function upsertRepo(owner: string, name: string): number {
   db.run("INSERT INTO repos (owner, name) VALUES (?, ?) ON CONFLICT (owner, name) DO NOTHING", [owner, name]);
   return (db.query("SELECT id FROM repos WHERE owner = ? AND name = ?").get(owner, name) as { id: number }).id;
 }
@@ -103,13 +103,13 @@ const SUMMARY_SQL = `
          v.additions, v.deletions, v.changed_files AS changedFiles, v.started_at AS startedAt, v.submitted_at AS submittedAt,
          v.mode, v.head_ref AS headRef, v.read_at AS readAt, v.error, v.posted_event AS postedEvent, v.run_number AS runNumber,
          v.opened_pr_number AS openedPrNumber,
-         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id) AS findingsTotal,
-         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.decision IS NOT NULL) AS findingsDecided,
-         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.decision = 'accepted') AS findingsAccepted,
-         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.resolved_run IS NULL AND COALESCE(f.decision, '') != 'dismissed') AS findingsOpen,
-         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.posted = 1) AS postedComments,
+         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL) AS findingsTotal,
+         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision IS NOT NULL) AS findingsDecided,
+         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision = 'accepted') AS findingsAccepted,
+         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.resolved_run IS NULL AND COALESCE(f.decision, '') != 'dismissed') AS findingsOpen,
+         (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.posted = 1) AS postedComments,
          MAX(v.started_at, COALESCE(v.submitted_at, ''), COALESCE(v.read_at, ''),
-             COALESCE((SELECT MAX(decided_at) FROM findings f WHERE f.review_id = v.id), '')) AS updatedAt
+             COALESCE((SELECT MAX(decided_at) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL), '')) AS updatedAt
   FROM reviews v JOIN repos r ON r.id = v.repo_id`;
 
 export function listReviews(limit = 200): ReviewSummary[] {
@@ -221,8 +221,9 @@ async function listFindings(reviewId: number, diffText: string | null, worktree:
     .query(
       `SELECT id, position, severity, lens, title, path, line, start_line AS startLine, side, why, fix, comment, confidence,
               anchorable, decision, dismiss_reason AS dismissReason, posted, file_snippet_json,
-              agent_prompt AS agentPrompt, resolved_run AS resolvedRun, still_open_run AS stillOpenRun, still_note AS stillNote
-       FROM findings WHERE review_id = ? ORDER BY ${SEVERITY_ORDER}, ${CONFIDENCE_ORDER}, position`,
+              agent_prompt AS agentPrompt, resolved_run AS resolvedRun, still_open_run AS stillOpenRun, still_note AS stillNote,
+              stack_finding_id AS stackFindingId, soft
+       FROM findings WHERE review_id = ? AND superseded_by IS NULL ORDER BY ${SEVERITY_ORDER}, ${CONFIDENCE_ORDER}, position`,
     )
     .all(reviewId) as any[];
   if (!rows.length) return [];
@@ -248,6 +249,7 @@ async function listFindings(reviewId: number, diffText: string | null, worktree:
         ...finding,
         anchorable: Boolean(r.anchorable),
         posted: Boolean(r.posted),
+        soft: Boolean(r.soft),
         snippet,
         messages: messages.filter((m) => m.findingId === r.id).map(({ findingId, ...m }) => m),
       } satisfies Finding;
@@ -317,7 +319,7 @@ export async function trackedRun<T>(
  * Creates a review for the PR and kicks off recon in the background. If this exact commit already
  * has a live (non-failed) review, returns that instead of starting over.
  */
-export async function startReview(input: string, defaultRepo?: string): Promise<number> {
+export async function startReview(input: string, defaultRepo?: string, opts: { fresh?: boolean } = {}): Promise<number> {
   const ref = parsePrRef(input, defaultRepo || lastRepo());
   const pr = await prView(ref);
 
@@ -328,7 +330,7 @@ export async function startReview(input: string, defaultRepo?: string): Promise<
   }
 
   const existing = latestReviewFor(`${ref.owner}/${ref.repo}`, pr.number);
-  if (existing && existing.headSha === pr.headRefOid && existing.phase !== "failed") return existing.id;
+  if (!opts.fresh && existing && existing.headSha === pr.headRefOid && existing.phase !== "failed") return existing.id;
 
   const id = insertReview(ref, pr, "recon_running");
   runRecon(id, ref, pr).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));

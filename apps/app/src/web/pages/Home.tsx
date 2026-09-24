@@ -4,6 +4,7 @@ import { api, navigate, savePos, useAsync } from "../api";
 import { Page } from "../components/Page";
 import { Spinner, Sym, timeAgo } from "../components/ui";
 import { nextStep, openReviews, shortRef } from "../reviewState";
+import { ReviewStackButton } from "../components/StackRail";
 
 type AsyncInbox = { data?: Inbox; error?: string; loading: boolean };
 
@@ -21,6 +22,8 @@ interface Row {
   action: string;
   at: string;
   go: () => void;
+  /** Part of a stack of open PRs: badge + "Review stack". */
+  stack?: { repo: string; pr: number; pos: number; size: number };
 }
 
 const short = (repo: string) => repo.split("/")[1] ?? repo;
@@ -68,6 +71,7 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
         action: "Start review",
         at,
         go: () => run(p.url, async () => (await api.start(p.url, p.repo)).id),
+        stack: p.stack ? { repo: p.repo, pr: p.number, ...p.stack } : undefined,
       };
     });
 
@@ -133,16 +137,22 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
           {g.rows.length > 0 && (
             <ul className="m-0 list-none overflow-hidden rounded-xl border border-line bg-surface p-0">
               {g.rows.map((r, i) => (
-                <li key={r.key} className={i ? "border-t border-line" : ""}>
+                <li key={r.key} className={`flex flex-wrap items-center ${i ? "border-t border-line" : ""}`}>
                   <button
                     onClick={r.go}
                     disabled={starting != null}
-                    className="flex min-h-[76px] w-full cursor-pointer items-center gap-4 border-0 bg-transparent px-[18px] py-3.5 text-left text-fg hover:bg-hover"
+                    className="flex min-h-[76px] min-w-0 flex-1 cursor-pointer items-center gap-4 border-0 bg-transparent px-[18px] py-3.5 text-left text-fg hover:bg-hover"
                   >
                     <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
                       <span className="flex min-w-0 items-center gap-2 text-[15px] font-medium">
                         {r.kind && <span className="flex-none rounded border border-line bg-sunken px-1.5 py-px text-[11px] font-semibold text-fg-3">{r.kind}</span>}
                         <span className="truncate">{r.title}</span>
+                        {r.stack && (
+                          <span title="Part of a stack" className="inline-flex flex-none items-center gap-[3px] rounded bg-accent-soft px-1.5 py-px text-[11px] font-semibold text-accent">
+                            <Sym name="stacks" size={13} />
+                            {r.stack.pos} of {r.stack.size}
+                          </span>
+                        )}
                       </span>
                       <span className="text-[13.5px] leading-[1.45] text-pretty" style={{ color: r.reasonColor ?? "var(--text-2)" }}>
                         {r.reason}
@@ -164,6 +174,11 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
                       <Sym name="arrow_forward" size={16} className="text-fg-3" />
                     </span>
                   </button>
+                  {r.stack && (
+                    <span className="my-1.5 mr-[18px] ml-auto">
+                      <ReviewStackButton repo={r.stack.repo} pr={r.stack.pr} compact />
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

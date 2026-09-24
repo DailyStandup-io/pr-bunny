@@ -283,3 +283,29 @@ describe("isMine", () => {
     expect(isMine("kierancrown", null)).toBe(false); // gh unavailable: treat as someone else's
   });
 });
+
+describe("stackTree", () => {
+  const pr = (number: number, head: string, base: string) => ({ number, title: `#${number}`, headRefName: head, baseRefName: base });
+  // main ← a(1) ← b(2) ← c(3) ← d(4), and e(5) branches off b; z is unrelated.
+  const open = [pr(3, "c", "b"), pr(1, "a", "main"), pr(5, "e", "b"), pr(4, "d", "c"), pr(2, "b", "a"), pr(9, "z", "main")];
+
+  test("finds the root from any layer and lists base first, children after their parent", async () => {
+    const { stackTree } = await import("./stacks");
+    for (const from of [1, 3, 4, 5]) {
+      const t = stackTree(open, from)!;
+      expect(t.map((n) => n.pr.number)).toEqual([1, 2, 3, 4, 5]);
+      expect(t.map((n) => n.depth)).toEqual([1, 2, 3, 4, 3]);
+      expect(t.find((n) => n.pr.number === 5)!.parentPr).toBe(2);
+    }
+  });
+  test("a PR on its own isn't a stack", async () => {
+    const { stackTree } = await import("./stacks");
+    expect(stackTree(open, 9)).toBeNull();
+    expect(stackTree(open, 404)).toBeNull();
+  });
+  test("a cycle in base branches doesn't loop forever", async () => {
+    const { stackTree } = await import("./stacks");
+    const t = stackTree([pr(1, "a", "b"), pr(2, "b", "a")], 1);
+    expect(t?.length).toBe(2);
+  });
+});

@@ -3,6 +3,7 @@ import type { Inbox, InboxEntry, InboxPr, RepoOption } from "../shared/types";
 import { db } from "./db/db";
 import { openPrCounts, repoOpenPrs, reviewInbox, reviewRequests, searchOpenPrs, viewer } from "./gh";
 import { lastRepo, latestReviewFor } from "./reviews";
+import { withStackBadges } from "./stacks";
 
 /** GitHub answers are cached briefly so switching repos and reopening the inbox feel instant. */
 const TTL_MS = 30_000;
@@ -63,12 +64,12 @@ export async function getInbox(): Promise<Inbox> {
     .sort((a, b) => b.activity.at.localeCompare(a.activity.at));
 
   const latest = db.query("SELECT id FROM reviews ORDER BY id DESC LIMIT 1").get() as { id: number } | null;
-  return { assigned, repos, lastRepo: lastRepo() ?? repos[0]?.name ?? null, latestReviewId: latest?.id ?? null };
+  return { assigned: await withStackBadges(assigned), repos, lastRepo: lastRepo() ?? repos[0]?.name ?? null, latestReviewId: latest?.id ?? null };
 }
 
 export async function repoPrs(repo: string): Promise<InboxEntry[]> {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error("Expected owner/name");
-  return (await cached(`repo:${repo}`, () => repoOpenPrs(repo))).map(withReview);
+  return withStackBadges((await cached(`repo:${repo}`, () => repoOpenPrs(repo))).map(withReview));
 }
 
 /** Open PRs matching `q` across every repo in the switcher. */
@@ -76,5 +77,5 @@ export async function searchPrs(q: string): Promise<InboxEntry[]> {
   const query = q.trim();
   if (query.length < 2) return [];
   const repos = (await getInbox()).repos.map((r) => r.name);
-  return (await cached(`search:${query}`, () => searchOpenPrs(query, repos))).map(withReview);
+  return withStackBadges((await cached(`search:${query}`, () => searchOpenPrs(query, repos))).map(withReview));
 }

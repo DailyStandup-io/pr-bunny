@@ -208,6 +208,21 @@ export function SettingsPage() {
           <Row label="Overview turn limit" hint="How many tries the overview gets to hand back a complete answer. It reads no files, so a few is plenty. Claude Code only.">
             <NumberInput value={draft.reconMaxTurns} onChange={(n) => set({ reconMaxTurns: n })} suffix="turns" />
           </Row>
+          <div className="border-t border-line px-[22px] pt-4">
+            <h3 className="m-0 text-[13px] font-semibold text-fg-3">Stacks</h3>
+          </div>
+          <Row label="Review order" hint="Which end Review all starts from. Base first reviews each layer after the one it builds on.">
+            <Segmented value={draft.stackOrder} options={[["base", "Base first"], ["top", "Top first"]]} onChange={(v) => set({ stackOrder: v as "base" | "top" })} />
+          </Row>
+          <Row label="PRs at once" hint="How many deep reviews run in parallel during Review all. More is faster and uses more of your plan.">
+            <Segmented value={String(draft.stackConcurrency)} options={[["1", "1"], ["2", "2"], ["3", "3"]]} onChange={(v) => set({ stackConcurrency: Number(v) })} />
+          </Row>
+          <Row label="Review all limit" hint="Stacks with more PRs than this don't offer Review all. You can still review each layer.">
+            <NumberInput value={draft.stackMaxAll} onChange={(n) => set({ stackMaxAll: n })} suffix="PRs or fewer" />
+          </Row>
+          <Row label="Include approved and merged PRs" hint="Off leaves out layers that are already approved, merged, or reviewed by you. Turn on to review them again.">
+            <Toggle checked={draft.stackIncludeDone} onChange={(v) => set({ stackIncludeDone: v })} />
+          </Row>
         </section>
 
         <section className={card}>
@@ -517,5 +532,24 @@ function About() {
         </a>
       </div>
     </section>
+  );
+}
+
+/** A small segmented control (like the theme picker). */
+function Segmented({ value, options, onChange }: { value: string; options: Array<[string, string]>; onChange: (v: string) => void }) {
+  return (
+    <div role="radiogroup" className="flex flex-none gap-0.5 rounded-[10px] border border-line bg-sunken p-[3px]">
+      {options.map(([key, label]) => (
+        <button
+          key={key}
+          role="radio"
+          aria-checked={value === key}
+          onClick={() => onChange(key)}
+          className={`h-[34px] min-w-10 cursor-pointer rounded-[7px] border-0 px-3 text-[13px] font-medium hover:text-fg ${value === key ? "bg-surface text-fg shadow-seg" : "bg-transparent text-fg-2"}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }

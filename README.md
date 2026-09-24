@@ -154,6 +154,29 @@ or still open. When it's clean, **Open PR** runs `gh pr create` with the suggest
 (CODEOWNERS and recent committers). PR Bunny never pushes, and never touches your checkout: it
 copies your branch into its own clone.
 
+## Stacks
+
+A stack is a chain of PRs, each based on the one below. PR Bunny spots them by following base
+branches through the repo's open PRs, and badges stacked PRs in the inbox and search ("2 of 5").
+Open one with **Review stack**, **Review whole stack** on a PR's Overview, or `bunny review --stack`
+inside a checkout.
+
+- **Layers:** every PR in the stack, top first, with its state and findings. **Review all** scans and
+  deep-reviews each layer against its own parent (base first by default, up to 3 at a time), without
+  waiting on "I've read it". Your own PRs are self-reviewed; everyone else's are peer reviews.
+- **Across the stack:** once every layer is reviewed, the agent reads them together for problems a
+  single-PR review can't see: code one PR adds and another relies on, a problem a later PR fixes, the
+  same issue repeated in several layers (merged into one finding), and layers that clash.
+- **Findings:** one queue for the whole stack, grouped by PR, with J/K moving across PRs. A finding
+  fixed later in the stack can be posted as a heads-up instead of a request for changes.
+- **Submit:** one GitHub review per PR, with a suggested Comment / Approve / Request changes for each,
+  an optional summary comment on the top PR, and a ready check for your own layers (never posted).
+- **When it changes:** new commits or rebases are spotted, and **Re-review** only re-runs those layers.
+  Merged layers drop out.
+
+Settings › Review › Stacks sets the order, how many at once, the largest stack Review all is offered
+for, and whether to include PRs that are already approved or merged.
+
 ## Day to day
 
 ```bash

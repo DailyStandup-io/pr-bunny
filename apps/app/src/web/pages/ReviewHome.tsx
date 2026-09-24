@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import type { ActiveRun, Inbox, ReviewSummary, SelfSources } from "../../shared/types";
+import type { ActiveRun, Inbox, ReviewSummary, SelfSources, StackSummary } from "../../shared/types";
 import { api, elapsed, navigate, savePos, useAsync, useNow } from "../api";
 import { Page } from "../components/Page";
 import { PrSearch } from "../components/PrSearch";
-import { field, Link, Spinner, Sym, timeAgo } from "../components/ui";
+import { field, Link, plain, Spinner, Sym, timeAgo } from "../components/ui";
 import { nextStep, openReviews, outcome, shortRef } from "../reviewState";
 
 type AsyncInbox = { data?: Inbox; error?: string; loading: boolean };
@@ -12,12 +12,14 @@ const parse = (t: string) => Date.parse(t.includes("T") ? t : `${t.replace(" ", 
 /** Review: start one, see what's in progress, check your own branches, and what finished today. */
 export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; repo: string | null; onRepo: (r: string) => void; runs: ActiveRun[] }) {
   const reviews = useAsync(api.reviews, []);
+  const stacks = useAsync(api.stacks, []);
   const sources = useAsync(() => (repo ? api.selfSources(repo) : Promise.resolve(null)), [repo]);
   // Refresh the cards when a run starts or finishes.
   const runKey = runs.map((r) => `${r.reviewId}:${r.stage}`).join(",");
   useEffect(() => {
     reviews.reload();
     sources.reload();
+    stacks.reload();
   }, [runKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const all = reviews.data ?? [];
@@ -48,6 +50,8 @@ export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; r
           </div>
         </section>
       )}
+
+      {(stacks.data ?? []).length > 0 && <Stacks stacks={stacks.data!} />}
 
       {repo && <YourBranches repo={repo} sources={sources} />}
 
@@ -383,5 +387,67 @@ function Picker({
         <span className="ml-auto font-mono text-[12px] text-fg-3">$ {cli}</span>
       </div>
     </div>
+  );
+}
+
+const STACK_SEG: Record<string, string> = {
+  waiting: "var(--line)",
+  scanning: "var(--accent-soft-2)",
+  readable: "var(--accent-soft-2)",
+  reviewing: "var(--accent)",
+  decide: "var(--warn)",
+  changed: "var(--warn)",
+  submitted: "var(--add)",
+  approved: "var(--add)",
+  failed: "var(--del)",
+  merged: "var(--line-strong)",
+  skipped: "var(--line-strong)",
+};
+
+/** Stack reviews in progress: reviewed together, posted as one review per PR. */
+function Stacks({ stacks }: { stacks: StackSummary[] }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="flex flex-wrap items-baseline gap-2.5">
+          <h2 className="m-0 text-[15px] font-semibold">Stacks</h2>
+          <span className="text-[13px] text-fg-3">Reviewed together, posted as one review per PR</span>
+        </div>
+        <span className="text-[13px] text-fg-3">{stacks.length}</span>
+      </div>
+      {stacks.slice(0, 4).map((c) => {
+        const color = c.running ? "var(--accent)" : c.states.some((x) => x === "failed") ? "var(--del)" : c.states.some((x) => x === "decide" || x === "changed") ? "var(--warn)" : "var(--add)";
+        return (
+          <button
+            key={c.id}
+            onClick={() => navigate(`/stack/${c.id}`)}
+            className="flex w-full cursor-pointer flex-col gap-2.5 rounded-xl border border-line bg-surface px-[18px] py-4 text-left text-fg transition-[border-color,box-shadow] duration-100 hover:border-line-strong hover:shadow-[0_6px_18px_oklch(0.2_0.02_80/0.08)]"
+          >
+            <span className="flex items-center gap-[7px] text-[12.5px] font-semibold" style={{ color }}>
+              {c.running ? <Spinner size={12} /> : <span className="size-2 flex-none rounded-full" style={{ background: color }} />}
+              <span>{c.detail}</span>
+              <span className="ml-auto font-normal text-fg-3">{timeAgo(c.updatedAt)}</span>
+            </span>
+            <span className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <span className="text-[15px] font-medium">{plain(c.title)}</span>
+              <span className="font-mono text-[12px] text-fg-3">
+                {c.repo} · {c.baseRef} → {c.topRef} · {c.size} PRs
+              </span>
+            </span>
+            <span className="flex h-1.5 max-w-[420px] gap-[3px]">
+              {c.states.map((st, i) => (
+                <span key={i} className="flex-1 rounded-[3px]" style={{ background: STACK_SEG[st] }} />
+              ))}
+            </span>
+            <span className="flex items-center justify-end gap-2 border-t border-line pt-2.5 text-[13px]">
+              <span className="inline-flex flex-none items-center gap-1 font-semibold text-accent">
+                Open stack
+                <Sym name="arrow_forward" size={16} />
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </section>
   );
 }

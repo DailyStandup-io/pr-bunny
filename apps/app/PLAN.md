@@ -103,3 +103,13 @@ chosen agent; session ids are prefixed per agent so one is never resumed with th
 (which can't fork a session) starts finding Q&A fresh. `codex.ts` maps our schemas to OpenAI's
 strict structured-output form (every property required, optional ones nullable) and reads the
 `exec --json` event stream (`thread.started`, `item.*`, `turn.completed` / `turn.failed`).
+
+## Stacks
+
+- **Detection:** the tree of open PRs linked by base branches, from the root (based on the repo's base branch) up. Badges on inbox/search entries.
+- **Model:** `stacks` + `stack_layers` (one row per PR, linked to that PR's latest review) + `stack_findings` (cross-layer). Cross findings are posted as ordinary findings on the PRs in their placements; per-layer findings they absorb are marked `superseded_by`.
+- **Review all:** a background runner; base or top first, 1–3 at a time, skips "I've read it", resumes after a restart, pausable. Your own PRs route to self-review.
+- **Across the stack:** after every layer is reviewed, one agent run over all layers (their findings, their diffs, the top layer's checkout), returning relies / repeated / fixed / breaks findings.
+- **Changes:** layer head vs. its review's head; GitHub's compare API explains it. Re-review = delta re-review (peer) or in-place re-run (self); the cross pass resets and runs again.
+- **Submit:** one review per PR with a suggested event; heads-up (soft) findings never force Request changes; optional summary comment on the top PR.
+
