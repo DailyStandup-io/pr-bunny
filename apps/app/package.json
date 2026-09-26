@@ -1,7 +1,7 @@
 {
   "name": "@pr-bunny/app",
-  "version": "0.2.0",
-  "codename": "Dandelion",
+  "version": "0.3.2",
+  "codename": "Garlic",
   "type": "module",
   "private": true,
   "bin": {

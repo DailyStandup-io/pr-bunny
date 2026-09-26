@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.3.2 “Garlic” — 2026-09-26
+
+### Fixed
+- The Activity bell no longer opens alongside the Inbox card or other sidebar popovers. Only one
+  shows at a time, and hovering another sidebar item closes it, even when you clicked it open.
+
+## 0.3.1 “Fennel” — 2026-09-26
+
+### Changed
+- The Activity bell opens when you hover it; click to keep it open.
+- Hiding an inbox row is now an eye icon beside its action (shown on hover). Click to hide until it
+  changes, ⇧-click to hide for good. Every row's action lines up again.
+- Hovering an inbox row no longer shows a coloured bar on its left edge.
+
+### Fixed
+- The hide options on inbox rows were cut off by the list.
+
+## 0.3.0 “Endive” — 2026-09-26
+
+### Added
+- **Notifications.** Get a desktop alert when a PR needs you or a review finishes. Pick them in
+  setup's new Notifications step or in Settings › Notifications:
+  - GitHub: review requested, assigned to you, a PR in one of your stacks updated, your PR reviewed.
+  - Reviews: overview ready, deep review finished, failed or out of turns, PR changed since you
+    reviewed it.
+  - Stacks: Review all finished, the across-the-stack pass ready. And new PR Bunny versions.
+  - Choose which repos, set quiet hours, stay quiet while PR Bunny is in front, and bundle bursts
+    ("3 reviews finished"). Clicking an alert opens the review, stack or inbox.
+  - An Activity bell in the sidebar keeps the recent events, so nothing is missed with alerts off.
+  - Alerts show while a PR Bunny tab is open (it can be in the background).
+- **Stop, resume and start again.** Stop a running overview, deep review or stack layer from the
+  review page, the In progress cards or the stack. "Stop Review all" can keep finished layers or
+  throw them away. A stopped review keeps its overview and can resume where the agent left off.
+- **Tidy the inbox.** Hide PRs until they change or for good (one at a time or several at once),
+  with Undo. Remove reviews from the lists, "Clear all finished", and restore anything hidden from
+  the Hidden tab or Settings › Housekeeping, which can also clear finished reviews automatically.
+  Keyboard: J/K to move, X to select, E to hide, ⌫ to remove, Z to undo.
+
+### Fixed
+- A PR only ever has one review running. Starting a review, a re-review and a stack's Review all at
+  the same moment no longer creates two. A PR whose stack is running Review all shows "Reviewing in
+  stack" and links to the stack.
+- Stopping a review now ends the agent process too.
+
 ## 0.2.0 “Dandelion” — 2026-09-24
 
 ### Added

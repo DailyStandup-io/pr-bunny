@@ -106,10 +106,14 @@ for (const t of targets) {
     },
   });
   if (!res.success) fail(`build failed for ${assetName(t)}:\n${res.logs.map(String).join("\n")}`);
-  if (process.env.PR_BUNNY_SIGN_IDENTITY) {
-    const entitlements = join(ROOT, "scripts", "entitlements.plist");
+  const entitlements = join(ROOT, "scripts", "entitlements.plist");
+  if (process.env.PR_BUNNY_SIGN_IDENTITY)
     await $`codesign --force --options runtime --timestamp --sign ${process.env.PR_BUNNY_SIGN_IDENTITY} --entitlements ${entitlements} ${outfile}`;
-  }
+  // Otherwise re-sign ad hoc: some Bun versions leave the linker's ad-hoc signature invalid once the
+  // app is appended, and macOS kills the binary on launch (exit 137).
+  else await $`codesign --force --sign - --entitlements ${entitlements} ${outfile}`.quiet();
+  const verify = await $`codesign --verify ${outfile}`.quiet().nothrow();
+  if (verify.exitCode !== 0) fail(`${assetName(t)} has an invalid code signature:\n${verify.stderr.toString()}`);
   const sha = new Bun.CryptoHasher("sha256").update(await Bun.file(outfile).arrayBuffer()).digest("hex");
   await Bun.write(`${outfile}.sha256`, `${sha}  ${assetName(t)}\n`);
   manifest.files[assetName(t)] = sha;

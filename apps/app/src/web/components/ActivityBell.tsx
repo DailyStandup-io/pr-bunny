@@ -1,12 +1,15 @@
 // The Activity bell at the top of the rail: recent notifications, whether or not desktop alerts
 // are allowed. Opening it clears the badge; clicking an entry goes where its notification would.
+// On the rail it shares the one-open-at-a-time popover state with Inbox, Review and the tooltips:
+// hovering peeks at the panel (and closes whatever else was open), clicking pins it until you click
+// again, press Esc, click outside or open another rail popover.
 import { useEffect, useRef, useState } from "react";
 import type { AppNotification, NotificationSettings } from "../../shared/types";
 import { Icon } from "@pr-bunny/icons";
 import { navigate } from "../api";
 import { bell, browserName, notifySettings, openNotification, useFeed, usePermission } from "../notifications";
 import { BUNNY_FACES } from "./Bunny";
-import { RAIL_GAP } from "./RailTip";
+import { RAIL_GAP, useRailPopover } from "./RailTip";
 import { Sym } from "./ui";
 
 const ICON: Record<AppNotification["kind"], [string, string]> = {
@@ -45,7 +48,11 @@ const isToday = (iso: string) => {
 export function ActivityBell({ compact = false }: { compact?: boolean }) {
   const feed = useFeed();
   const perm = usePermission();
-  const [open, setOpen] = useState(false);
+  // The bottom nav's bell is a separate popover from the rail's (both are mounted).
+  const rail = useRailPopover(compact ? "activity-nav" : "activity");
+  const open = rail.open;
+  /** Opened by a click (stays open) rather than by hovering (closes when the pointer leaves). */
+  const [pinned, setPinned] = useState(false);
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
   /** The badge count when the bell was opened ("3 new"). */
   const [fresh, setFresh] = useState(0);
@@ -70,13 +77,22 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   const unseen = feed?.unseen ?? 0;
   const allOff = settings ? Object.values(settings.events).every((v) => !v) : false;
   const items = feed?.items ?? [];
-  const toggle = () => {
-    if (open) return setOpen(false);
+  const setOpen = (on: boolean) => (on ? rail.show() : rail.hide());
+  // Unpin whenever it closes, including when another rail popover takes over.
+  useEffect(() => {
+    if (!open) return setPinned(false);
     setFresh(unseen);
-    setOpen(true);
     notifySettings(true).then(setSettings);
     if (unseen) bell.seen();
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const toggle = () => {
+    if (open && pinned) return setOpen(false);
+    rail.show();
+    setPinned(true);
   };
+  // Same timing as the Inbox card: open at once, linger briefly so the pointer can cross the gap.
+  const hoverIn = () => rail.show();
+  const hoverOut = () => !pinned && rail.hide(180);
   const goSettings = () => {
     setOpen(false);
     navigate("/settings#notifications");
@@ -218,7 +234,7 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <div ref={wrap} className="relative">
+    <div ref={wrap} className="relative" onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
       <button
         onClick={toggle}
         aria-label={unseen ? `Activity, ${unseen} new` : "Activity"}
@@ -229,7 +245,8 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
         <span className="text-[11px] font-medium">Activity</span>
       </button>
       {open && (
-        <div className="absolute top-[3px] left-full z-45" style={{ paddingLeft: RAIL_GAP }}>
+        // Interacting with a peeked panel pins it, so it doesn't vanish mid-click.
+        <div className="absolute top-[3px] left-full z-45" style={{ paddingLeft: RAIL_GAP }} onMouseDown={() => setPinned(true)}>
           {panel}
         </div>
       )}

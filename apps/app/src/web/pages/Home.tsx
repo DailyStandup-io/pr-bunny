@@ -5,7 +5,7 @@ import { Page } from "../components/Page";
 import { Spinner, Sym, timeAgo } from "../components/ui";
 import { nextStep, openReviews, shortRef } from "../reviewState";
 import { ReviewStackButton } from "../components/StackRail";
-import { HiddenList, HideButton, InboxEmpty, InboxTabs, RowCheck, SelectionBar, useHidden, type HideMode } from "../components/InboxTools";
+import { HiddenList, HideIcon, InboxEmpty, InboxTabs, RowCheck, SelectionBar, useHidden, type HideMode } from "../components/InboxTools";
 import { KeyHints, useToast } from "../components/Tidy";
 
 type AsyncInbox = { data?: Inbox; error?: string; loading: boolean };
@@ -246,13 +246,12 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
                   onMouseEnter={() => setFocus(r.key)}
                   className={`group relative flex flex-wrap items-center ${i ? "border-t border-line" : ""} ${sel.has(r.key) ? "bg-accent-soft" : focus === r.key ? "bg-hover" : ""}`}
                 >
-                  {focus === r.key && <span aria-hidden className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-r-sm bg-accent" />}
                   <RowCheck on={sel.has(r.key)} visible={sel.size > 0 || focus === r.key} onToggle={() => toggle(r.key)} />
                   <button
                     onClick={r.go}
                     onFocus={() => setFocus(r.key)}
                     disabled={starting != null}
-                    className="flex min-h-[76px] min-w-0 flex-1 cursor-pointer items-center gap-4 border-0 bg-transparent py-3.5 pr-[18px] pl-2 text-left text-fg"
+                    className="flex min-h-[76px] min-w-0 flex-1 cursor-pointer items-center gap-4 border-0 bg-transparent py-3.5 pr-3 pl-2 text-left text-fg"
                   >
                     <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
                       <span className="flex min-w-0 items-center gap-2 text-[15px] font-medium">
@@ -280,17 +279,21 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
                         <span className="truncate font-mono text-[12px] text-fg-3">{r.meta}</span>
                       </span>
                     </span>
-                    <span className="inline-flex h-[34px] flex-none items-center gap-1 rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium whitespace-nowrap">
-                      {starting === r.key ? <Spinner /> : r.action}
-                      <Sym name="arrow_forward" size={16} className="text-fg-3" />
-                    </span>
                   </button>
-                  {sel.size === 0 && (
-                    <HideButton
-                      onHide={(m) => hideRows([r], m)}
-                      className={`my-1.5 mr-[18px] ${focus === r.key ? "" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"}`}
-                    />
-                  )}
+                  {/* Always takes its space, so every row's action lines up; shown on hover or focus. */}
+                  <HideIcon
+                    onHide={(m) => hideRows([r], m)}
+                    className={`mr-1.5 ${sel.size === 0 && focus === r.key ? "" : "pointer-events-none opacity-0"} ${sel.size === 0 ? "group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100" : ""}`}
+                  />
+                  <button
+                    onClick={r.go}
+                    onFocus={() => setFocus(r.key)}
+                    disabled={starting != null}
+                    className="mr-[18px] inline-flex h-[34px] flex-none cursor-pointer items-center gap-1 rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium whitespace-nowrap text-fg hover:bg-hover"
+                  >
+                    {starting === r.key ? <Spinner /> : r.action}
+                    <Sym name="arrow_forward" size={16} className="text-fg-3" />
+                  </button>
                   {r.stack && (
                     <span className="my-1.5 mr-[18px] ml-auto">
                       <ReviewStackButton repo={r.stack.repo} pr={r.stack.pr} compact />
