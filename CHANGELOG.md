@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.1 “Fennel” — 2026-09-26
+
+### Changed
+- The Activity bell opens when you hover it; click to keep it open.
+- Hiding an inbox row is now an eye icon beside its action (shown on hover). Click to hide until it
+  changes, ⇧-click to hide for good. Every row's action lines up again.
+- Hovering an inbox row no longer shows a coloured bar on its left edge.
+
+### Fixed
+- The hide options on inbox rows were cut off by the list.
+
 ## 0.3.0 “Endive” — 2026-09-26
 
 ### Added
