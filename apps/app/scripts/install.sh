@@ -44,13 +44,8 @@ esac
 # Rosetta: an x64 shell on Apple silicon should still get the native build.
 if [ "$ARCH" = x64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then ARCH=arm64; fi
 
-# prbunny.dev counts installs by Mac type (?arch=); nothing else is sent, and nothing is saved here.
-# A custom PR_BUNNY_DOWNLOAD_URL gets no parameters.
-COUNT=
-if [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ]; then COUNT="?arch=${OS}-${ARCH}"; fi
-
 # Find a host that answers (prbunny.dev, else GitHub), whether or not a version was pinned.
-if LATEST="$(curl -fsL "$BASE/latest$COUNT" 2>/dev/null)"; then
+if LATEST="$(curl -fsL "$BASE/latest" 2>/dev/null)"; then
   :
 elif [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ] && LATEST="$(curl -fsSL "$GITHUB/latest/download/latest")"; then
   step "prbunny.dev isn't reachable from here; downloading from GitHub instead."
@@ -68,7 +63,11 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 if [ -n "${PR_BUNNY_VERSION:-}" ]; then ok "Version: ${B}${VERSION}${X} ${D}(pinned; latest is $(printf '%s' "$LATEST" | tr -d '[:space:]'), ${OS}/${ARCH})${X}"; else ok "Latest version: ${B}${VERSION}${X} ${D}(${OS}/${ARCH})${X}"; fi
 step "Downloading ${ASSET}…"
 if [ "$BASE" = github ]; then URL="$GITHUB/download/v$VERSION/$ASSET"; else URL="$BASE/$VERSION/$ASSET"; fi
-curl -fSL --progress-bar "$URL" -o "$TMP/bunny" || fail "download failed: $URL"
+# prbunny.dev counts installs by version and Mac type (?arch= on the binary, not its checksum);
+# nothing else is sent, and nothing is saved here. GitHub and PR_BUNNY_DOWNLOAD_URL get no parameters.
+COUNT=
+if [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ] && [ "$BASE" != github ]; then COUNT="?arch=${OS}-${ARCH}"; fi
+curl -fSL --progress-bar "$URL$COUNT" -o "$TMP/bunny" || fail "download failed: $URL"
 curl -fsSL "$URL.sha256" -o "$TMP/bunny.sha256" || fail "checksum download failed"
 
 EXPECTED="$(cut -d' ' -f1 "$TMP/bunny.sha256")"

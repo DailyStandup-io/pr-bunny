@@ -4,15 +4,17 @@
 // (<origin>/latest, <origin>/latest.json, <origin>/<version>/<file>).
 //
 // What's counted (lib/counts.ts), after the response is sent so it never delays or breaks a download:
-//   /releases/latest?arch=<os-arch>        install.sh: one install
-//   /releases/latest.json?v=<version>      the updater's check, by the running version
-//   /releases/<version>/<file>?from=<v>    the updater's download (not the .sha256): one update
+//   /releases/<version>/bunny-<os-arch>?arch=<os-arch>   install.sh's download: one install
+//   /releases/latest.json?v=<version>                    the updater's check, by the running version
+//   /releases/<version>/bunny-<os-arch>?from=<v>         the updater's download: one update
+// Only the binaries count (not their .sha256 or anything else under a version).
 import { after, type NextRequest } from "next/server";
-import { arch, record, version, type Count } from "@/lib/counts";
+import { ARCHES, arch, record, version, type Count } from "@/lib/counts";
 
 export const dynamic = "force-dynamic";
 
 const GITHUB = "https://github.com/DailyStandup-io/pr-bunny/releases";
+const BINARIES = ARCHES.map((a) => `bunny-${a}`);
 
 /** Where a release path redirects to (the same URLs next.config.ts used to redirect to). */
 function destination(path: string[]): string | null {
@@ -39,8 +41,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
   const q = req.nextUrl.searchParams;
   if (to) {
     try {
-      const count = classify(path, q, to);
-      if (count) after(() => count.then(record).catch(() => {}));
+      const count = classify(path, q);
+      if (count) after(() => record(count).catch(() => {}));
     } catch {}
   }
   return redirect(to);
@@ -51,25 +53,10 @@ export async function HEAD(_req: NextRequest, { params }: Ctx) {
   return redirect(destination((await params).path));
 }
 
-function classify(path: string[], q: URLSearchParams, to: string): Promise<Count> | null {
-  if (path.length === 1 && path[0] === "latest") {
-    return latestVersion(to).then((v) => ({ kind: "install", arch: arch(q.get("arch")), version: v }));
-  }
-  if (path.length === 1 && path[0] === "latest.json") {
-    return Promise.resolve({ kind: "check", version: version(q.get("v")) });
-  }
-  if (path.length === 2 && q.has("from") && !path[1]!.endsWith(".sha256")) {
-    return Promise.resolve({ kind: "update", from: version(q.get("from")), to: version(path[0]) });
-  }
+function classify(path: string[], q: URLSearchParams): Count | null {
+  if (path.length === 1 && path[0] === "latest.json") return { kind: "check", version: version(q.get("v")) };
+  if (path.length !== 2 || !BINARIES.includes(path[1]!)) return null;
+  if (q.has("from")) return { kind: "update", from: version(q.get("from")), to: version(path[0]) };
+  if (q.has("arch")) return { kind: "install", arch: arch(q.get("arch")), version: version(path[0]) };
   return null;
-}
-
-/** The version install.sh is about to get: the `latest` file itself (cached for a few minutes). */
-async function latestVersion(url: string): Promise<string> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(1500), next: { revalidate: 300 } });
-    return res.ok ? version((await res.text()).trim()) : "unknown";
-  } catch {
-    return "unknown";
-  }
 }

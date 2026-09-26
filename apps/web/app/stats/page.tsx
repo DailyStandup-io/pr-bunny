@@ -1,10 +1,11 @@
 // Private install and update counts (lib/counts.ts). Needs STATS_TOKEN, as `Authorization: Bearer …`
-// or ?token=…; anything else, including a site without STATS_TOKEN, gets a 404.
+// or the cookie from signing in at /stats/login; anything else, including a site without STATS_TOKEN,
+// gets a 404.
 import type { Metadata } from "next";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { createHash, timingSafeEqual } from "node:crypto";
 import { readStats, redis, type Stats } from "@/lib/counts";
+import { COOKIE, allowed, bearerOf } from "@/lib/stats-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,17 +14,10 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-const same = (a: string, b: string) => {
-  const h = (s: string) => createHash("sha256").update(s).digest();
-  return timingSafeEqual(h(a), h(b));
-};
-
-export default async function StatsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const expected = process.env.STATS_TOKEN;
-  const auth = (await headers()).get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const q = (await searchParams).token;
-  const given = auth ?? (typeof q === "string" ? q : undefined);
-  if (!expected || !given || !same(given, expected)) notFound();
+export default async function StatsPage() {
+  const bearer = bearerOf((await headers()).get("authorization"));
+  const cookie = (await cookies()).get(COOKIE)?.value;
+  if (!allowed({ bearer, cookie })) notFound();
 
   const r = redis();
   let stats: Stats | null = null;

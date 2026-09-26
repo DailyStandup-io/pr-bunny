@@ -3,7 +3,7 @@
 // here first (semver, a known arch), and anything else becomes "unknown".
 //
 //   installs:total, installs:v:<version>, installs:arch:<arch>   all-time counts (INCR)
-//   installs:day:<yyyy-mm-dd>   hash, field = arch                one install.sh run
+//   installs:day:<yyyy-mm-dd>   hash, field = arch                one binary download by install.sh
 //   checks:day:<yyyy-mm-dd>     hash, field = running version     one updater check of latest.json
 //   updates:day:<yyyy-mm-dd>    hash, field = "<from>><to>"       one binary download by the updater
 //   updates:total                                                 all-time updates
@@ -61,7 +61,10 @@ async function store(count: Count) {
   await p.exec();
 }
 
-/** Vercel Web Analytics custom events (Pro plan), only with VERCEL_ANALYTICS_EVENTS=1. */
+/**
+ * Vercel Web Analytics custom events (Pro plan), only with VERCEL_ANALYTICS_EVENTS=1. Empty headers:
+ * otherwise track() forwards the request's user agent, IP (x-forwarded-for) and cookies.
+ */
 async function mirror(count: Count) {
   if (process.env.VERCEL_ANALYTICS_EVENTS !== "1") return;
   const { track } = await import("@vercel/analytics/server");
@@ -69,7 +72,7 @@ async function mirror(count: Count) {
     count.kind === "install" ? { arch: count.arch, version: count.version }
     : count.kind === "check" ? { version: count.version }
     : { from: count.from, to: count.to };
-  await track(count.kind === "install" ? "Install" : count.kind === "check" ? "Update check" : "Update", props);
+  await track(count.kind === "install" ? "Install" : count.kind === "check" ? "Update check" : "Update", props, { headers: new Headers() });
 }
 
 // ---------- reading (the /stats page and `bun run stats`) ----------

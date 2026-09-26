@@ -12,12 +12,13 @@ bun run build:web
 - `/install` serves `apps/app/scripts/install.sh`, read at build time (`/install.sh` rewrites to it).
 - `/releases/*` (`app/releases/[...path]/route.ts`) redirects to GitHub Releases, or to
   `RELEASES_ORIGIN` when that's set, so the installer and the app's updater only talk to prbunny.dev.
-  On the way it counts, anonymously (`lib/counts.ts`, only counters, no IPs or IDs): installs
-  (`/releases/latest?arch=`), update checks by running version (`latest.json?v=`) and updates
-  (`<version>/<file>?from=`). Counts are recorded after the redirect is sent, with a short timeout,
+  On the way it counts, anonymously (`lib/counts.ts`, only counters, no IPs or IDs): installs by
+  version and Mac (`<version>/bunny-<os-arch>?arch=`, install.sh's download), update checks by running
+  version (`latest.json?v=`) and updates (`<version>/bunny-<os-arch>?from=`). Counts are recorded after the redirect is sent, with a short timeout,
   so storage being down never breaks a download.
-- `/stats` shows the counts. It needs `STATS_TOKEN` (`Authorization: Bearer …` or `?token=…`) and is a
-  404 otherwise; it's `noindex` and disallowed in `robots.txt`. `bun run stats` (here or at the root)
+- `/stats` shows the counts. It needs `STATS_TOKEN`, as `Authorization: Bearer …` or, in a browser,
+  by signing in at `/stats/login` (a POSTed form that sets an HttpOnly cookie holding a hash of the
+  token, so it never appears in a URL). It's a 404 otherwise, `noindex` and disallowed in `robots.txt`. `bun run stats` (here or at the root)
   prints the same numbers, reading `UPSTASH_REDIS_REST_*` from the environment or `.env.local`
   (`vercel env pull .env.local`).
 - Bunny art comes from `@pr-bunny/brand`. It's licensed and not in the repo: without it the page
