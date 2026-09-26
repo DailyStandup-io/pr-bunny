@@ -5,7 +5,7 @@
 // `--output-schema`, `exec resume`). If a Codex release changes these, this is the file to fix.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ClaudeOptions, ClaudeResult } from "./claude";
+import { killOnAbort, type ClaudeOptions, type ClaudeResult } from "./claude";
 import { DATA_DIR, LOG_DIR } from "./config";
 
 /** Stored session ids are prefixed so a Claude session is never resumed with Codex, or vice versa. */
@@ -84,6 +84,11 @@ export async function runCodex<T = unknown>(o: ClaudeOptions): Promise<ClaudeRes
     sessionId: null, structured: null, text: "", isError: false, error: null, hitTurnLimit: false,
     costUsd: null, durationMs: null, inputTokens: null, outputTokens: null, denials: [], logPath,
   };
+  // Stopped before it started: don't spawn at all.
+  if (o.signal?.aborted) {
+    await log.end();
+    return { ...result, isError: true, error: "Cancelled" };
+  }
   const codex = Bun.which("codex", { PATH: codexEnv().PATH });
   if (!codex) {
     await log.end();
@@ -107,8 +112,7 @@ export async function runCodex<T = unknown>(o: ClaudeOptions): Promise<ClaudeRes
     stdout: "pipe",
     stderr: "pipe",
   });
-  const onAbort = () => proc.kill();
-  o.signal?.addEventListener("abort", onAbort, { once: true });
+  const stopKilling = killOnAbort(proc, o.signal);
 
   let finalMessage = "";
   let failed: string | null = null;
@@ -153,7 +157,7 @@ export async function runCodex<T = unknown>(o: ClaudeOptions): Promise<ClaudeRes
   }
   handle(buf);
   const exitCode = await proc.exited;
-  o.signal?.removeEventListener("abort", onAbort);
+  stopKilling();
   const stderr = (await new Response(proc.stderr).text()).trim();
   await log.end();
 

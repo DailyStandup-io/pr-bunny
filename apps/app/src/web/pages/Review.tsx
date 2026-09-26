@@ -9,11 +9,21 @@ import { StatusPanel } from "../components/StatusPanel";
 import { SubmitPanel } from "../components/SubmitPanel";
 import { card, cardLabel, field, Inline, RunMeta, Spinner, Sym } from "../components/ui";
 import { Walkthrough } from "../components/Walkthrough";
+import { ForceStop, StopControl, StoppedCard, type StopTarget } from "../components/Tidy";
 
 type Tab = "overview" | "findings" | "submit" | "status";
 
 const defaultTab = (phase: Phase, hasRecon: boolean): Tab =>
-  phase === "submitted" ? "submit" : phase === "walkthrough" || phase === "reviewing" || phase === "read" ? "findings" : phase === "failed" && hasRecon ? "findings" : "overview";
+  phase === "submitted"
+    ? "submit"
+    : phase === "walkthrough" || phase === "reviewing" || phase === "read"
+      ? "findings"
+      : (phase === "failed" || phase === "cancelled") && hasRecon
+        ? "findings"
+        : "overview";
+
+/** SQLite `datetime('now')` (UTC, no zone) or ISO → ms. */
+const parseUtc = (t: string) => Date.parse(t.includes("T") ? t : `${t.replace(" ", "T")}Z`);
 
 /** Page gutter + max width shared by every tab body. */
 const body = "mx-auto w-full max-w-[1400px] px-[clamp(16px,3vw,32px)]";
@@ -23,6 +33,8 @@ export function Review({ id }: { id: number }) {
   const [review, setReview] = useState<ReviewDetail | null>(null);
   const [lines, setLines] = useState<ProgressLine[]>([]);
   const [tab, setTabState] = useState<Tab | null>(null);
+  // Set when you press Stop, until the run settles ("Stopping…", then Force stop after 20 s).
+  const [stoppingAt, setStoppingAt] = useState<number | null>(null);
   const lastPhase = useRef<Phase | null>(null);
   const setTab = (t: Tab) => {
     setTabState(t);
@@ -36,8 +48,12 @@ export function Review({ id }: { id: number }) {
     setReview(null);
     setLines([]);
     setTabState(null);
+    setStoppingAt(null);
     lastPhase.current = null;
   }, [id]);
+  useEffect(() => {
+    if (review && review.phase !== "recon_running" && review.phase !== "reviewing" && review.phase !== "read") setStoppingAt(null);
+  }, [review?.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow the flow: when the phase moves on, jump to the tab for it.
   useEffect(() => {
@@ -76,6 +92,24 @@ export function Review({ id }: { id: number }) {
   const scanning = review.phase === "recon_running";
   const reviewing = review.phase === "reviewing" || review.phase === "read";
   const selfOpen = review.findings.filter((f) => f.resolvedRun == null && f.decision !== "dismissed").length;
+  const cancelled = review.phase === "cancelled";
+  const lastRun = (kind: "recon" | "review") => review.runs.filter((r) => r.kind === kind).at(-1);
+  const stopTarget = (stage: "recon" | "review"): StopTarget => {
+    const run = lastRun(stage);
+    const st = review.runningStack;
+    return {
+      reviewId: id,
+      stage,
+      startedAt: run ? parseUtc(run.startedAt) : null,
+      layer: st && st.pos ? { stackId: st.id, pos: st.pos, size: st.size } : null,
+      rerun: self && review.findings.length > 0,
+    };
+  };
+  const stop = (stage: "recon" | "review") => ({
+    action: <StopControl target={stopTarget(stage)} stoppingAt={stoppingAt} onStopping={setStoppingAt} />,
+    stopping: stoppingAt != null,
+    footer: stoppingAt != null ? <ForceStop reviewId={id} stoppingAt={stoppingAt} /> : undefined,
+  });
   const tabs: Array<{ key: Tab; label: string; done: boolean; enabled: boolean; loading?: boolean; badge?: React.ReactNode }> = [
     { key: "overview", label: "Overview", done: !scanning && isRead, enabled: true, loading: scanning },
     {
@@ -136,12 +170,19 @@ export function Review({ id }: { id: number }) {
         <>
           {review.phase === "recon_running" && (
             <div className={`${body} pt-6 pb-8`}>
-              <ProgressFeed title={review.mode === "self" ? "Scanning your change" : "Scanning the PR"} lines={reconLines} active />
+              <ProgressFeed title={review.mode === "self" ? "Scanning your change" : "Scanning the PR"} lines={reconLines} active {...stop("recon")} />
             </div>
           )}
           {review.phase === "failed" && !review.recon && (
             <div className={`${body} pt-6 pb-8`}>
               <Failed review={review} lines={reconLines} onRetry={async () => setReview(await api.retry(id))} />
+            </div>
+          )}
+          {cancelled && !review.recon && (
+            <div className={`${body} pt-6 pb-8`}>
+              <StoppedCard review={review} onChanged={setReview}>
+                {reconLines.length > 0 && <ProgressFeed title="What happened" lines={reconLines} active={false} />}
+              </StoppedCard>
             </div>
           )}
           {review.recon && !scanning && <Overview review={review} qaLines={qaLines} onRead={async () => setReview(await api.markRead(id))} onContinue={() => setTab("findings")} />}
@@ -152,12 +193,19 @@ export function Review({ id }: { id: number }) {
         <>
           {(review.phase === "reviewing" || review.phase === "read") && (
             <div className={`${body} pt-6 pb-8`}>
-              <Reviewing review={review} lines={reviewLines} onCancel={() => api.cancel(id)} />
+              <Reviewing review={review} lines={reviewLines} stop={stop("review")} />
             </div>
           )}
           {review.phase === "failed" && review.recon && (
             <div className={`${body} pt-6 pb-8`}>
               <Failed review={review} lines={reviewLines} onRetry={async () => setReview(await api.retry(id))} />
+            </div>
+          )}
+          {cancelled && (
+            <div className={`${body} pt-6 pb-8`}>
+              <StoppedCard review={review} onChanged={setReview}>
+                {(review.recon ? reviewLines : reconLines).length > 0 && <ProgressFeed title="What happened" lines={review.recon ? reviewLines : reconLines} active={false} />}
+              </StoppedCard>
             </div>
           )}
           {hasFindings && <Walkthrough review={review} qaLines={qaLines} onChanged={reload} onGoSubmit={() => setTab("submit")} />}
@@ -279,15 +327,18 @@ function Header({ review }: { review: ReviewDetail }) {
   );
 }
 
-function Reviewing({ review, lines, onCancel }: { review: ReviewDetail; lines: ProgressLine[]; onCancel: () => void }) {
+function Reviewing({ review, lines, stop }: { review: ReviewDetail; lines: ProgressLine[]; stop: { action: React.ReactNode; stopping: boolean; footer?: React.ReactNode } }) {
   const agent = useAgentLabel();
   const { wide, mid } = useLayout();
-  const [cancelling, setCancelling] = useState(false);
-  const started = review.runs.filter((r) => r.kind === "review").at(-1)?.startedAt;
   return (
     <div className="grid items-start gap-5" style={{ gridTemplateColumns: wide || mid ? "minmax(0,1fr) 340px" : "minmax(0,1fr)" }}>
       <div className="flex min-w-0 flex-col gap-3">
-        <ProgressFeed title={review.mode === "self" && review.runNumber > 1 ? `Re-running the review (run ${review.runNumber + 1})` : "In-depth review in progress"} lines={lines} active />
+        <ProgressFeed
+          title={review.mode === "self" && review.runNumber > 1 ? `Re-running the review (run ${review.runNumber + 1})` : "In-depth review in progress"}
+          lines={lines}
+          active
+          {...stop}
+        />
         <p className="m-0 px-1 text-[13px] leading-[1.55] text-pretty text-fg-3">
           {agent} is reading {review.mode === "self" ? "a snapshot of your change" : "the checked-out PR"}
           {review.stack.length ? " and its stack neighbours" : ""} with read-only access. Big changes can take 5–15 minutes. You can leave this page; it keeps
@@ -309,18 +360,6 @@ function Reviewing({ review, lines, onCancel }: { review: ReviewDetail; lines: P
               ))}
             </ol>
           </section>
-        )}
-        {started && (
-          <button
-            onClick={() => {
-              setCancelling(true);
-              onCancel();
-            }}
-            disabled={cancelling}
-            className="h-9 cursor-pointer self-start rounded-lg border border-line bg-transparent px-3 text-[13px] text-fg-2 hover:border-del hover:text-del disabled:opacity-50"
-          >
-            {cancelling ? "Cancelling…" : "Cancel review"}
-          </button>
         )}
       </aside>
     </div>
@@ -443,6 +482,7 @@ function TurnLimitCard({ review, stop, lines, onRetry }: { review: ReviewDetail;
 
 /** What the bunny says about this review: how a self-review stands, or what you posted. */
 function reviewMood(review: ReviewDetail, go: (t: Tab) => void): MoodReport | null {
+  if (review.phase === "cancelled") return { mood: "stopped" };
   const done = review.phase === "walkthrough" || review.phase === "submitted";
   if (review.mode === "self") {
     if (!done) return null;

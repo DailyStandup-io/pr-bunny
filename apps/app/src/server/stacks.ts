@@ -24,6 +24,7 @@ import { checkoutInfo } from "./local";
 import { STACK_SCHEMA, stackPrompt, stackSystem, type StackLayerInput, type StackOutput } from "./prompts/stack";
 import { getRow, isMine, markRead, startReview, upsertRepo } from "./reviews";
 import { getSettings } from "./settings";
+import { clearReviews, stopReview } from "./tidy";
 
 // ---------- open PRs, cached briefly ----------
 
@@ -107,7 +108,7 @@ interface StackRow {
   base_ref: string;
   title: string;
   run_state: StackDetail["runState"];
-  cross_state: "running" | "done" | "failed" | null;
+  cross_state: "running" | "done" | "failed" | "stopped" | null;
   cross_error: string | null;
   summary_on: number;
   summary_text: string | null;
@@ -228,12 +229,14 @@ function linkReviews(id: number) {
   const s = stackRow(id);
   if (!s) return;
   for (const l of layerRows(id)) {
+    // Removed (cleared) reviews don't count: a layer whose review was removed starts over.
     const latest = db
       .query(
-        `SELECT v.id FROM reviews v WHERE v.repo_id = ? AND v.pr_number = ? ORDER BY v.id DESC LIMIT 1`,
+        `SELECT v.id FROM reviews v WHERE v.repo_id = ? AND v.pr_number = ? AND v.cleared_at IS NULL ORDER BY v.id DESC LIMIT 1`,
       )
       .get(s.repo_id, l.pr_number) as { id: number } | null;
     if (latest && latest.id !== l.review_id) db.run("UPDATE stack_layers SET review_id = ? WHERE stack_id = ? AND pr_number = ?", [latest.id, id, l.pr_number]);
+    else if (!latest && l.review_id != null) db.run("UPDATE stack_layers SET review_id = NULL WHERE stack_id = ? AND pr_number = ?", [id, l.pr_number]);
   }
 }
 
@@ -288,6 +291,8 @@ function layerState(l: LayerRow, r: ReviewBits | null): LayerState {
       return "reviewing";
     case "failed":
       return "failed";
+    case "cancelled":
+      return "stopped";
     case "submitted":
       return changed ? "changed" : r.posted_event === "APPROVE" ? "approved" : "submitted";
     default:
@@ -506,6 +511,8 @@ export function setRunState(id: number, state: StackDetail["runState"]) {
     if (size > max) throw new Error(`This stack has ${size} PRs, more than the Review all limit (${max}). Change it in Settings › Review › Stacks, or review each layer.`);
   }
   db.run("UPDATE stacks SET run_state = ?, updated_at = datetime('now') WHERE id = ?", [state, id]);
+  // Starting Review all again after Stop lets the across pass run once the layers are done.
+  if (state === "running") db.run("UPDATE stacks SET cross_state = NULL WHERE id = ? AND cross_state = 'stopped'", [id]);
   if (state === "running") tickStack(id).catch((e) => console.warn(`stack ${id}:`, e));
 }
 
@@ -543,7 +550,7 @@ async function tickStack(id: number) {
     const settings = getSettings();
     const layers = await buildLayers(s);
     const done = (l: StackLayer) => l.state === "merged" || (!settings.stackIncludeDone && (l.state === "approved" || l.state === "submitted"));
-    const todo = layers.filter((l) => !l.skipped && !done(l) && l.state !== "failed" && l.state !== "decide" && l.state !== "changed" && l.state !== "submitted" && l.state !== "approved");
+    const todo = layers.filter((l) => !l.skipped && !done(l) && l.state !== "failed" && l.state !== "stopped" && l.state !== "decide" && l.state !== "changed" && l.state !== "submitted" && l.state !== "approved");
     const include = settings.stackIncludeDone ? layers.filter((l) => !l.skipped && (l.state === "approved" || l.state === "submitted")) : [];
     const queue = [...todo, ...include].sort((a, b) => (settings.stackOrder === "top" ? b.depth - a.depth : a.depth - b.depth));
     const running = s.run_state === "running";
@@ -567,7 +574,7 @@ async function tickStack(id: number) {
     if (!stillGoing && s.run_state === "running") db.run("UPDATE stacks SET run_state = 'idle', updated_at = datetime('now') WHERE id = ?", [id]);
     // Once every open layer has its own review, look across the stack (once per set of reviews).
     const reviewed = layers.filter((l) => !l.skipped && l.state !== "merged" && l.state !== "waiting");
-    const allReviewed = reviewed.length >= 2 && reviewed.every((l) => DONE_REVIEWING.includes(l.state) || l.state === "failed") && reviewed.filter((l) => DONE_REVIEWING.includes(l.state)).length >= 2;
+    const allReviewed = reviewed.length >= 2 && reviewed.every((l) => DONE_REVIEWING.includes(l.state) || l.state === "failed" || l.state === "stopped") && reviewed.filter((l) => DONE_REVIEWING.includes(l.state)).length >= 2;
     if (allReviewed && !inFlight && s.cross_state === null) runCross(id).catch((e) => console.warn(`stack ${id} cross:`, e));
   } finally {
     ticking.delete(id);
@@ -617,10 +624,15 @@ function resetCross(id: number) {
 const LAYER_DIFF_LIMIT = 40_000;
 const TOTAL_DIFF_LIMIT = 140_000;
 
+/** The across pass in flight per stack, so Stop Review all can kill its agent. */
+const crossRuns = new Map<number, AbortController>();
+
 export async function runCross(id: number) {
   const s = stackRow(id);
   if (!s) throw new Error("Stack not found");
   if (s.cross_state === "running") return;
+  const ctrl = new AbortController();
+  crossRuns.set(id, ctrl);
   db.run("UPDATE stacks SET cross_state = 'running', cross_error = NULL, updated_at = datetime('now') WHERE id = ?", [id]);
   const lines: Array<{ text: string; at: number }> = [];
   crossLines.set(id, lines);
@@ -669,15 +681,24 @@ export async function runCross(id: number) {
       maxTurns: settings.reviewMaxTurns,
       logName: `stack-${id}-cross`,
       onProgress: (p) => progress(p.text.replaceAll(`${wt}/`, "")),
+      signal: ctrl.signal,
     });
+    if (ctrl.signal.aborted) throw new Error("Stopped");
     if (res.isError || !res.structured) throw new Error(res.error ?? "The look across the stack didn't return a result.");
     saveCross(id, layers, res.structured);
     progress(`Found ${res.structured.findings.length} across the stack`);
     db.run("UPDATE stacks SET cross_state = 'done', updated_at = datetime('now') WHERE id = ?", [id]);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    progress(`Failed: ${msg}`);
-    db.run("UPDATE stacks SET cross_state = 'failed', cross_error = ?, updated_at = datetime('now') WHERE id = ?", [msg, id]);
+    if (ctrl.signal.aborted) {
+      progress("Stopped");
+      db.run("UPDATE stacks SET cross_state = 'stopped', cross_error = NULL, updated_at = datetime('now') WHERE id = ?", [id]);
+    } else {
+      progress(`Failed: ${msg}`);
+      db.run("UPDATE stacks SET cross_state = 'failed', cross_error = ?, updated_at = datetime('now') WHERE id = ?", [msg, id]);
+    }
+  } finally {
+    if (crossRuns.get(id) === ctrl) crossRuns.delete(id);
   }
 }
 
@@ -822,3 +843,37 @@ export async function postStack(id: number): Promise<Array<{ pr: number; ok: boo
   if (results.some((r) => r.ok)) db.run("UPDATE stacks SET posted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?", [id]);
   return results;
 }
+
+// ---------- stop Review all ----------
+
+/**
+ * Stop Review all: nothing new starts, running layers are stopped (their agents killed), and the
+ * across pass is stopped and won't start on its own. `keepFinished` keeps layers that finished
+ * their review; otherwise every layer's review that isn't posted is removed (Undo-able from the
+ * review lists), so the stack starts from scratch next time. Nothing is written to GitHub.
+ */
+export async function stopStack(id: number, keepFinished: boolean): Promise<{ stopped: number; removed: number[] }> {
+  const s = stackRow(id);
+  if (!s) throw new Error("Stack not found");
+  db.run("UPDATE stacks SET run_state = 'idle', updated_at = datetime('now') WHERE id = ?", [id]);
+  crossRuns.get(id)?.abort();
+  linkReviews(id);
+  const layers = await buildLayers(s);
+  let stopped = 0;
+  for (const l of layers)
+    if (l.reviewId && RUNNING.includes(l.state)) {
+      stopReview(l.reviewId);
+      stopped++;
+    }
+  let removed: number[] = [];
+  if (!keepFinished) {
+    const ids = layers.filter((l) => l.reviewId && l.state !== "submitted" && l.state !== "approved" && l.state !== "merged").map((l) => l.reviewId!);
+    removed = clearReviews(ids).cleared;
+    resetCross(id);
+    linkReviews(id);
+  }
+  if (stackRow(id)?.cross_state !== "done") db.run("UPDATE stacks SET cross_state = 'stopped', cross_error = NULL WHERE id = ?", [id]);
+  touch(id);
+  return { stopped, removed };
+}
+

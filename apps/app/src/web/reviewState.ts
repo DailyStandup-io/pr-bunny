@@ -53,6 +53,17 @@ export function nextStep(r: ReviewSummary, run?: ActiveRun): NextStep {
     const why = (r.error ?? "").split("\n")[0]!.slice(0, 90);
     return { ...base, status: "Failed", color: "var(--del)", detail: why || "The last step failed", reason: `The last step failed${why ? `: ${why}` : "."}`, action: "Open", tab: "overview" };
   }
+  if (r.phase === "cancelled") {
+    return {
+      ...base,
+      status: "Stopped",
+      color: "var(--text-3)",
+      detail: r.hasOverview ? "Overview kept" : "Nothing kept",
+      reason: r.hasOverview ? "You stopped the deep review. The overview is kept." : "You stopped the overview before it finished.",
+      action: r.hasOverview ? "Resume" : "Start again",
+      tab: r.hasOverview ? "findings" : "overview",
+    };
+  }
   if (r.phase === "recon_ready") {
     return { ...base, status: "Overview ready", color: "var(--accent)", detail: "Not read yet", reason: "The overview is ready. You haven't read it.", action: "Read", tab: "overview" };
   }

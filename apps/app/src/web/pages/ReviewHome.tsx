@@ -4,7 +4,9 @@ import { api, elapsed, navigate, savePos, useAsync, useNow } from "../api";
 import { Page } from "../components/Page";
 import { PrSearch } from "../components/PrSearch";
 import { field, Link, plain, Spinner, Sym, timeAgo } from "../components/ui";
-import { nextStep, openReviews, outcome, shortRef } from "../reviewState";
+import { latestPerPr, nextStep, openReviews, outcome, shortRef } from "../reviewState";
+import { BUNNY_FACES } from "../components/Bunny";
+import { BunnyFace, ConfirmPop, CONFIRM_AFTER_MS, GreySpinner, useToast } from "../components/Tidy";
 
 type AsyncInbox = { data?: Inbox; error?: string; loading: boolean };
 const parse = (t: string) => Date.parse(t.includes("T") ? t : `${t.replace(" ", "T")}Z`);
@@ -33,6 +35,34 @@ export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; r
     r.mode === "self" ? r.openedPrNumber != null && parse(r.updatedAt) > dayAgo : r.submittedAt != null && parse(r.submittedAt) > dayAgo,
   );
 
+  // ---------- remove / clear (local only; Undo brings them back) ----------
+  const [toast, showToast] = useToast();
+  const [askClear, setAskClear] = useState(false);
+  // Posted, failed and stopped. Anything with findings still to decide stays.
+  const clearable = latestPerPr(all).filter(
+    (r) => !runs.some((x) => x.reviewId === r.id) && (r.phase === "submitted" || r.phase === "failed" || r.phase === "cancelled" || (r.mode === "self" && r.openedPrNumber != null)),
+  );
+  const remove = async (ids: number[], msg: string) => {
+    try {
+      const { cleared } = await api.clearReviews(ids);
+      reviews.reload();
+      showToast({
+        msg,
+        undo: async () => {
+          await api.restoreReviews(cleared);
+          reviews.reload();
+        },
+      });
+    } catch (e) {
+      showToast({ msg: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  const clearAll = () => {
+    setAskClear(false);
+    const ids = clearable.map((r) => r.id);
+    remove(ids, `Cleared ${ids.length} finished ${ids.length === 1 ? "review" : "reviews"}`);
+  };
+
   return (
     <Page gap={44}>
       <PrSearch inbox={inbox} repo={repo} onRepo={onRepo} reviews={all} title="Start a review" />
@@ -41,11 +71,40 @@ export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; r
         <section className="flex flex-col gap-3">
           <div className="flex items-baseline justify-between gap-3">
             <h2 className="m-0 text-[15px] font-semibold">In progress</h2>
-            <span className="text-[13px] text-fg-3">{active.length} open</span>
+            <span className="flex items-baseline gap-3 text-[13px] text-fg-3">
+              {active.length} open
+              {clearable.length > 0 && (
+                <span className="relative">
+                  <button
+                    onClick={() => setAskClear(true)}
+                    className="cursor-pointer border-0 bg-transparent p-0 text-[13px] font-medium text-fg-2 underline decoration-line-strong underline-offset-[3px] hover:text-fg"
+                  >
+                    Clear all finished
+                  </button>
+                  {askClear && (
+                    <ConfirmPop
+                      title={`Clear ${clearable.length} finished ${clearable.length === 1 ? "review" : "reviews"}?`}
+                      body="Posted, failed and stopped. Anything with findings to decide stays. Comments on GitHub aren't touched."
+                      cancel="Cancel"
+                      confirm={`Clear ${clearable.length}`}
+                      onConfirm={clearAll}
+                      onClose={() => setAskClear(false)}
+                    />
+                  )}
+                </span>
+              )}
+            </span>
           </div>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
             {active.slice(0, 8).map((r) => (
-              <ActiveCard key={r.id} review={r} run={runs.find((x) => x.reviewId === r.id)} />
+              <ActiveCard
+                key={r.id}
+                review={r}
+                run={runs.find((x) => x.reviewId === r.id)}
+                onRemove={(running) => remove([r.id], running ? "Stopped and removed" : "Removed")}
+                onChanged={() => reviews.reload()}
+                toast={showToast}
+              />
             ))}
           </div>
         </section>
@@ -65,41 +124,150 @@ export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; r
             {finished.map((r) => {
               const o = outcome(r);
               return (
-                <li key={r.id} className="border-t border-line">
-                  <Link to={`/review/${r.id}`} className="flex min-h-12 w-full items-center gap-4 px-1 py-2.5 text-fg hover:text-accent hover:no-underline">
+                <li key={r.id} className="group flex items-center border-t border-line">
+                  <Link to={`/review/${r.id}`} className="flex min-h-12 min-w-0 flex-1 items-center gap-4 px-1 py-2.5 text-fg hover:text-accent hover:no-underline">
                     <span className="min-w-0 flex-1 truncate text-[14px]">{r.title}</span>
                     <span className="flex-none font-mono text-[12px] text-fg-3">{shortRef(r)}</span>
                     <span className="flex-none text-[12.5px]" style={{ color: o.color }}>{o.text}</span>
                     <span className="w-14 flex-none text-right text-[12.5px] text-fg-3">{timeAgo(r.submittedAt ?? r.updatedAt)}</span>
                   </Link>
+                  {/* Removes it from these lists only: the review on GitHub stays. */}
+                  <button
+                    title="Remove from the list"
+                    aria-label="Remove from the list"
+                    onClick={() => remove([r.id], "Removed")}
+                    className="ml-1 grid size-7 flex-none cursor-pointer place-items-center rounded-[7px] border border-transparent bg-transparent text-fg-3 opacity-0 group-hover:opacity-100 hover:border-del hover:bg-del-soft hover:text-del focus-visible:opacity-100"
+                  >
+                    <Sym name="close" size={16} />
+                  </button>
                 </li>
               );
             })}
           </ul>
         </section>
       )}
+      {toast}
     </Page>
   );
 }
 
-function ActiveCard({ review: r, run }: { review: ReviewSummary; run?: ActiveRun }) {
+/**
+ * A review in progress. Running: a stop button shows on hover or focus (S), and the confirm replaces
+ * the footer in place. Stopped: Resume or clear (×). Any card: ⌫ or × removes it, with Undo.
+ */
+function ActiveCard({
+  review: r,
+  run,
+  onRemove,
+  onChanged,
+  toast,
+}: {
+  review: ReviewSummary;
+  run?: ActiveRun;
+  onRemove: (running: boolean) => void;
+  onChanged: () => void;
+  toast: ReturnType<typeof useToast>[1];
+}) {
   const s = nextStep(r, run);
   const now = useNow(s.running);
+  const [ask, setAsk] = useState<"stop" | "remove" | null>(null);
+  const [stoppingAt, setStoppingAt] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const stopped = r.phase === "cancelled";
+  useEffect(() => {
+    if (!s.running) setStoppingAt(null);
+  }, [s.running]);
+  const stopping = s.running && stoppingAt != null;
+
   const go = () => {
+    if (ask) return;
     savePos(r.id, { tab: s.tab });
     navigate(`/review/${r.id}`);
   };
+  const stop = async () => {
+    setAsk(null);
+    setStoppingAt(Date.now());
+    try {
+      await api.cancel(r.id);
+    } catch (e) {
+      setStoppingAt(null);
+      toast({ msg: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  const requestStop = () => {
+    if (!s.running || stopping) return;
+    if (run && Date.now() - Date.parse(run.startedAt) < CONFIRM_AFTER_MS) {
+      stop().then(() => toast({ msg: "Stopped", action: { label: "Start again", go: () => api.restart(r.id).then(onChanged, () => {}) } }));
+    } else setAsk("stop");
+  };
+  const requestRemove = () => (s.running ? setAsk("remove") : onRemove(false));
+  const resume = async () => {
+    setBusy(true);
+    try {
+      if (r.hasOverview) await api.resume(r.id);
+      else await api.restart(r.id);
+      onChanged();
+    } catch (e) {
+      toast({ msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const status = stopping ? "Stopping…" : s.status;
+  const color = stopping ? "var(--text-3)" : s.color;
+  const iconBtn = "grid size-7 cursor-pointer place-items-center rounded-[7px] border border-line-strong bg-surface text-fg-2";
+
   return (
-    <button
+    <div
+      role="link"
+      tabIndex={0}
       onClick={go}
-      className="flex min-h-[204px] cursor-pointer flex-col gap-2 rounded-xl border border-line bg-surface px-[18px] py-4 text-left text-fg transition-[border-color,box-shadow] duration-[120ms] hover:border-line-strong hover:shadow-[0_6px_18px_oklch(0.2_0.02_80/0.08)]"
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter") go();
+        else if (e.key.toLowerCase() === "s" && !e.metaKey && !e.ctrlKey) requestStop();
+        else if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          requestRemove();
+        }
+      }}
+      className="group relative flex min-h-[204px] cursor-pointer flex-col gap-2 rounded-xl border border-line bg-surface px-[18px] py-4 text-left text-fg transition-[border-color,box-shadow] duration-[120ms] outline-none hover:border-line-strong hover:shadow-[0_6px_18px_oklch(0.2_0.02_80/0.08)] focus-visible:border-line-strong focus-visible:shadow-[0_0_0_3px_var(--accent-soft)]"
     >
-      <span className="flex items-center gap-[7px] text-[12.5px] font-semibold" style={{ color: s.color }}>
-        {s.running ? <Spinner size={12} /> : <span className="size-2 flex-none rounded-full" style={{ background: s.color }} />}
-        <span>{s.status}</span>
+      <span className="flex items-center gap-[7px] pr-16 text-[12.5px] font-semibold" style={{ color: stopped ? "var(--text-2)" : color }}>
+        {stopping ? <GreySpinner size={12} /> : s.running ? <Spinner size={12} /> : <span className="size-2 flex-none rounded-full" style={{ background: s.color }} />}
+        <span>{status}</span>
         <span className="ml-auto font-normal text-fg-3 tabular-nums">{run ? elapsed(run.startedAt, now) : timeAgo(r.updatedAt)}</span>
       </span>
-      <span className="line-clamp-2 text-[15px] leading-[1.35] font-medium text-pretty">{r.title}</span>
+      {!ask && !stopping && (
+        <span className="absolute top-[9px] right-[9px] flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-focus-visible:opacity-100">
+          {s.running && (
+            <button
+              title="Stop review · S"
+              aria-label="Stop review"
+              onClick={(e) => {
+                e.stopPropagation();
+                requestStop();
+              }}
+              className={`${iconBtn} hover:border-del hover:bg-del-soft hover:text-del`}
+            >
+              <Sym name="stop" size={17} />
+            </button>
+          )}
+          <button
+            title={s.running ? "Stop and remove · ⌫" : "Remove · ⌫"}
+            aria-label="Remove review"
+            onClick={(e) => {
+              e.stopPropagation();
+              requestRemove();
+            }}
+            className={`${iconBtn} hover:border-del hover:bg-del-soft hover:text-del`}
+          >
+            <Sym name="close" size={17} />
+          </button>
+        </span>
+      )}
+      <span className={`line-clamp-2 text-[15px] leading-[1.35] font-medium text-pretty ${stopping ? "text-fg-2" : ""}`}>{r.title}</span>
       <span className="font-mono text-[12px] text-fg-3">
         {r.mode === "self" ? "Self-review · " : ""}
         {shortRef(r)} · {r.author}
@@ -111,15 +279,79 @@ function ActiveCard({ review: r, run }: { review: ReviewSummary; run?: ActiveRun
             <span className="block h-full bg-accent transition-[width] duration-300" style={{ width: `${Math.round(s.bar * 100)}%` }} />
           </span>
         )}
-        {s.running && <span className="block truncate font-mono text-[12px] text-fg-2">{run?.lines.at(-1)?.text ?? "Starting…"}</span>}
-        <span className="flex items-center justify-between gap-2 border-t border-line pt-2.5 text-[13px]">
-          <span className="min-w-0 truncate text-fg-2">{s.detail}</span>
-          <span className="inline-flex flex-none items-center gap-1 font-semibold text-accent">
-            {s.action}
-            <Sym name="arrow_forward" size={16} />
+        {s.running && !ask && <span className="block truncate font-mono text-[12px] text-fg-2">{stopping ? "Waiting for the agent to stop" : (run?.lines.at(-1)?.text ?? "Starting…")}</span>}
+        {ask === "stop" ? (
+          <span className="flex items-center gap-1.5 border-t border-line pt-2.5" onClick={(e) => e.stopPropagation()}>
+            <span className="min-w-0 flex-1 text-[12.5px] text-fg-2">{run?.stage === "recon" ? "Stop? Nothing is kept yet" : "Stop? The overview is kept"}</span>
+            <CardButton onClick={() => setAsk(null)} autoFocus>
+              No
+            </CardButton>
+            <CardButton danger onClick={stop}>
+              Stop
+            </CardButton>
           </span>
-        </span>
+        ) : ask === "remove" ? (
+          <span className="flex flex-col gap-2 border-t border-line pt-2.5" onClick={(e) => e.stopPropagation()}>
+            <span className="flex gap-2">
+              <BunnyFace face={BUNNY_FACES.wobbly} size={28} />
+              <span className="text-[12.5px] leading-snug text-fg-2">
+                <b className="font-semibold text-fg">Remove this review?</b> It's still running. We'll stop it first.
+              </span>
+            </span>
+            <span className="flex justify-end gap-1.5">
+              <CardButton onClick={() => setAsk(null)} autoFocus>
+                Keep it
+              </CardButton>
+              <CardButton
+                danger
+                onClick={() => {
+                  setAsk(null);
+                  onRemove(true);
+                }}
+              >
+                Stop and remove
+              </CardButton>
+            </span>
+          </span>
+        ) : stopped ? (
+          <span className="flex items-center gap-2.5 border-t border-line pt-2.5 text-[13px]">
+            <span className="min-w-0 flex-1 truncate text-fg-2">{s.detail}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                resume();
+              }}
+              disabled={busy}
+              className="cursor-pointer border-0 bg-transparent p-0 text-[13px] font-semibold text-accent disabled:opacity-50"
+            >
+              {busy ? <Spinner size={12} /> : s.action}
+            </button>
+          </span>
+        ) : (
+          <span className="flex items-center justify-between gap-2 border-t border-line pt-2.5 text-[13px]">
+            <span className="min-w-0 truncate text-fg-2">{s.detail}</span>
+            <span className="inline-flex flex-none items-center gap-1 font-semibold text-accent">
+              {s.action}
+              <Sym name="arrow_forward" size={16} />
+            </span>
+          </span>
+        )}
       </span>
+    </div>
+  );
+}
+
+function CardButton({ onClick, danger, autoFocus, children }: { onClick: () => void; danger?: boolean; autoFocus?: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      autoFocus={autoFocus}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={`h-[26px] flex-none cursor-pointer rounded-md px-2 text-[12px] font-medium ${danger ? "border-0 bg-del text-on-accent" : "border border-line-strong bg-surface text-fg hover:bg-hover"}`}
+    >
+      {children}
     </button>
   );
 }
@@ -402,6 +634,7 @@ const STACK_SEG: Record<string, string> = {
   failed: "var(--del)",
   merged: "var(--line-strong)",
   skipped: "var(--line-strong)",
+  stopped: "var(--line-strong)",
 };
 
 /** Stack reviews in progress: reviewed together, posted as one review per PR. */

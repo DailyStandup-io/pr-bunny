@@ -75,6 +75,7 @@ src/web/
 - `findings(id, review_id, severity, lens, title, path, line, start_line, side, why, fix, comment, confidence, anchorable, decision, dismiss_reason, carried_from_id)`
 - `finding_messages(id, finding_id, role, content, created_at)`
 - `claude_runs(id, review_id, kind, session_id, model, cost_usd, duration_ms, input_tokens, output_tokens, status, log_path)`
+- `reviews.cleared_at` (removed from the lists; Undo clears it), `inbox_hidden(key, mode, stamp, title, meta, hidden_at)`, `housekeeping(key, value)`
 
 ## Milestones
 
@@ -113,3 +114,10 @@ strict structured-output form (every property required, optional ones nullable) 
 - **Changes:** layer head vs. its review's head; GitHub's compare API explains it. Re-review = delta re-review (peer) or in-place re-run (self); the cross pass resets and runs again.
 - **Submit:** one review per PR with a suggested event; heads-up (soft) findings never force Request changes; optional summary comment on the top PR.
 
+## Stop and tidy up
+
+- **Stop:** every overview and deep review run claims an AbortController (`runs.ts`); Stop (`tidy.ts` `stopReview`, `POST /api/reviews/:id/cancel`) aborts it, which SIGTERMs the spawned `claude`/`codex` and SIGKILLs it after 5 s (`killOnAbort`). The run then settles as phase `cancelled` (a self-review re-run goes back to `walkthrough`); Force stop settles it at once. Under 30 s there's no confirm.
+- **Resume / Start again:** a stopped overview kept nothing, so both rerun it. A stopped deep review keeps the overview; Resume continues its agent session (`--resume`), Start again runs it from scratch.
+- **Stacks:** a stopped layer is `stopped`: Review all doesn't restart it and the across pass runs without it. Stop Review all stops running layers and the across pass (`cross_state = 'stopped'`, so it won't start on its own), optionally removing the layers' unposted reviews.
+- **Remove:** `reviews.cleared_at` hides a review from the lists, stopping it first if it's running; Undo clears it. Settings › Housekeeping can clear posted and stopped reviews after N days (failed ones too, unless kept).
+- **Inbox hiding:** `inbox_hidden`, "until it changes" (back when the row's timestamp passes `stamp`) or "for good". Local only; GitHub isn't told.

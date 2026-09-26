@@ -7,7 +7,9 @@ export type Phase =
   | "reviewing"
   | "walkthrough"
   | "submitted"
-  | "failed";
+  | "failed"
+  /** Stopped by you. The overview (if it finished) is kept; Resume or Start again. */
+  | "cancelled";
 
 export interface StackPr {
   number: number;
@@ -96,6 +98,8 @@ export interface ReviewSummary {
   postedComments: number;
   runNumber: number;
   openedPrNumber: number | null;
+  /** 1 when the overview finished (SQLite boolean): a stopped deep review keeps it. */
+  hasOverview: number;
   /** Latest thing that happened: started, a decision, or posting. */
   updatedAt: string;
 }
@@ -560,7 +564,9 @@ export type LayerState =
   | "failed"
   | "changed"
   | "merged"
-  | "skipped";
+  | "skipped"
+  /** You stopped this layer's review. Review all doesn't restart it; the across pass skips it. */
+  | "stopped";
 
 export interface StackLayer {
   pr: number;
@@ -626,7 +632,8 @@ export interface StackDetail {
   /** Layers in stack order: base first, children after their parent. */
   layers: StackLayer[];
   runState: "idle" | "running" | "paused";
-  cross: { state: "pending" | "running" | "done" | "failed"; error: string | null; findings: StackFinding[]; lines: Array<{ text: string; at: number }> };
+  /** "stopped": Review all was stopped, so the across pass won't start on its own. */
+  cross: { state: "pending" | "running" | "done" | "failed" | "stopped"; error: string | null; findings: StackFinding[]; lines: Array<{ text: string; at: number }> };
   /** Review all is offered for stacks this size or smaller (Settings › Stacks). */
   maxAll: number;
   order: "base" | "top";
@@ -676,4 +683,26 @@ export interface StackBadge {
   stackId: number | null;
   /** That stack is running Review all, so it owns this PR's review. */
   running: boolean;
+}
+
+// ---------- cancel and clean up ----------
+
+/** A PR (or review, or branch) hidden from the inbox. Local only: GitHub isn't told. */
+export interface HiddenItem {
+  /** `pr:owner/name#123`, `review:<id>` or `branch:owner/name:<branch>`. */
+  key: string;
+  /** "change": back when it changes (its timestamp moves past `stamp`). "good": back only when restored. */
+  mode: "change" | "good";
+  stamp: string | null;
+  title: string;
+  meta: string | null;
+  hiddenAt: string;
+}
+
+/** Settings › Housekeeping additions, saved on their own (not through the Settings save bar). */
+export interface HousekeepingPrefs {
+  /** Clear posted and stopped reviews after this many days; 0 = never. */
+  clearFinishedDays: number;
+  /** Keep failed reviews until you retry or remove them (off: auto-clear clears them too). */
+  keepFailed: boolean;
 }

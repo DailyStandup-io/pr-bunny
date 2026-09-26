@@ -113,9 +113,10 @@ export const PHASE_LABEL: Record<Phase, string> = {
   walkthrough: "Ready to walk through",
   submitted: "Submitted",
   failed: "Failed",
+  cancelled: "Stopped",
 };
 
-export const phaseColor = (p: Phase) => (p === "submitted" ? "var(--add)" : p === "failed" ? "var(--del)" : "var(--accent)");
+export const phaseColor = (p: Phase) => (p === "submitted" ? "var(--add)" : p === "failed" ? "var(--del)" : p === "cancelled" ? "var(--text-3)" : "var(--accent)");
 
 export const inlineCode = "rounded bg-code-inline px-[5px] font-mono text-[0.86em]";
 

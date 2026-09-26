@@ -22,7 +22,7 @@ export const BUNNY_FACES = {
 };
 const F = BUNNY_FACES;
 
-export type Mood = "idle" | "working" | "issues" | "fixed" | "clean" | "rejected" | "approved" | "commented" | "update" | "caughtUp" | "error";
+export type Mood = "idle" | "working" | "issues" | "fixed" | "clean" | "rejected" | "approved" | "commented" | "update" | "caughtUp" | "error" | "stopped";
 
 const MOODS: Record<Mood, { face: string | null; say: string }> = {
   idle: { face: F.smile, say: "Hi! Pick a PR and I'll take a look." },
@@ -36,6 +36,8 @@ const MOODS: Record<Mood, { face: string | null; say: string }> = {
   update: { face: F.wink, say: "A new version is out. Update from Settings." },
   caughtUp: { face: F.surprised, say: "You're all caught up." },
   error: { face: F.crying, say: "Couldn't reach your coding agent. Check Settings." },
+  // Neutral, not sad: you chose to stop it.
+  stopped: { face: F.wink, say: "Stopped. Resume whenever you like." },
 };
 
 /** What a page wants the bunny to show. `go` runs when the bunny is clicked (a path, or a callback). */
