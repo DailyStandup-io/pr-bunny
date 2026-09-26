@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 “Garlic” — 2026-09-26
+
+### Fixed
+- The Activity bell no longer opens alongside the Inbox card or other sidebar popovers. Only one
+  shows at a time, and hovering another sidebar item closes it, even when you clicked it open.
+
 ## 0.3.1 “Fennel” — 2026-09-26
 
 ### Changed
