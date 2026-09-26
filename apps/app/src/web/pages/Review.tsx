@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useBunnyMood, type MoodReport } from "../components/Bunny";
-import type { LiveEvent, Phase, ReviewDetail, TurnLimitStop } from "../../shared/types";
+import type { LiveEvent, Phase, ReviewDetail, SelfPr, TurnLimitStop } from "../../shared/types";
+import { prSummary } from "../../shared/pr";
+import { useSelfPr, useSyncLabel, type SelfPrState } from "../selfPr";
 import { api, navigate, readPos, savePos, useAgentLabel, useAsync, useLayout, useLive } from "../api";
 import { Overview } from "../components/Overview";
 import { ReadyCheck } from "../components/ReadyCheck";
@@ -74,7 +76,8 @@ export function Review({ id }: { id: number }) {
     if (ev.type === "phase" || ev.type === "run" || ev.type === "finding" || ev.type === "chat") reload();
   });
 
-  useBunnyMood(review ? reviewMood(review, (t) => setTab(t)) : null);
+  const gh = useSelfPr(review);
+  useBunnyMood(review ? reviewMood(review, gh.pr, (t) => setTab(t)) : null);
 
   if (error && !review) return <Centered><p className="text-del">{error}</p></Centered>;
   if (!review) return <Centered><Spinner size={20} /></Centered>;
@@ -128,7 +131,7 @@ export function Review({ id }: { id: number }) {
 
   return (
     <div className="flex flex-1 flex-col">
-      <Header review={review} />
+      <Header review={review} gh={gh} />
 
       <div className="sticky top-0 z-20 border-b border-line bg-surface">
         <nav className="mx-auto flex max-w-[1400px] gap-0.5 overflow-x-auto px-[clamp(8px,3vw,24px)]">
@@ -208,7 +211,7 @@ export function Review({ id }: { id: number }) {
               </StoppedCard>
             </div>
           )}
-          {hasFindings && <Walkthrough review={review} qaLines={qaLines} onChanged={reload} onGoSubmit={() => setTab("submit")} />}
+          {hasFindings && <Walkthrough review={review} pr={gh.pr} qaLines={qaLines} onChanged={reload} onGoSubmit={() => setTab("submit")} />}
         </>
       )}
 
@@ -216,6 +219,7 @@ export function Review({ id }: { id: number }) {
         (self ? (
           <ReadyCheck
             review={review}
+            gh={gh}
             onChanged={reload}
             onGoFinding={(idx) => {
               savePos(id, { tab: "findings", idx });
@@ -250,7 +254,7 @@ function StackOwner({ review }: { review: ReviewDetail }) {
   );
 }
 
-function Header({ review }: { review: ReviewDetail }) {
+function Header({ review, gh }: { review: ReviewDetail; gh: SelfPrState }) {
   const chips = (
     <span className="inline-flex items-center gap-1.5 font-mono text-[12px]">
       <span className="rounded-[5px] border border-line bg-sunken px-[7px] py-px text-fg">{review.headRef}</span>
@@ -279,13 +283,15 @@ function Header({ review }: { review: ReviewDetail }) {
               <span className="text-add">+{review.additions.toLocaleString()}</span> <span className="text-del">−{review.deletions.toLocaleString()}</span>
             </span>
             <span>{review.changedFiles} {review.changedFiles === 1 ? "file" : "files"}</span>
-            {pr ? (
+            {gh.pr ? (
+              <PrLink pr={gh.pr} gh={gh} />
+            ) : pr ? (
               <a href={`https://github.com/${review.repo}/pull/${pr}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-[12.5px] text-fg-2">
                 #{pr}
                 <Sym name="open_in_new" size={15} />
               </a>
             ) : (
-              <span className="text-fg-3">No PR yet</span>
+              <span className="text-fg-3">{gh.loading ? "Looking for a PR…" : "No PR yet"}</span>
             )}
             <StackOwner review={review} />
           </div>
@@ -324,6 +330,37 @@ function Header({ review }: { review: ReviewDetail }) {
         <h1 className="m-0 text-[clamp(20px,2.2vw,25px)] leading-[1.3] font-semibold tracking-[-0.01em] text-pretty">{review.title}</h1>
       </div>
     </header>
+  );
+}
+
+/** The self-review header's PR: link, state pill, and "Updated 20s ago" (click to check now). */
+function PrLink({ pr, gh }: { pr: SelfPr; gh: SelfPrState }) {
+  const label = useSyncLabel(gh.syncedAt, gh.syncing);
+  const pill =
+    pr.state === "merged"
+      ? { text: "Merged", cls: "bg-add-soft text-add" }
+      : pr.state === "closed"
+        ? { text: "Closed", cls: "bg-sunken text-fg-2" }
+        : pr.draft
+          ? { text: "Draft", cls: "bg-sunken text-fg-2" }
+          : { text: "Open", cls: "bg-accent-soft text-accent" };
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+      <a href={pr.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-[12.5px] text-fg hover:underline">
+        #{pr.number}
+        <Sym name="open_in_new" size={15} />
+      </a>
+      <span className={`rounded-full px-2 py-px text-[12px] font-medium ${pill.cls}`}>{pill.text}</span>
+      <button
+        onClick={gh.refresh}
+        title="Check GitHub now"
+        aria-label={`${label}. Check GitHub now`}
+        className="inline-flex h-7 cursor-pointer items-center gap-[5px] rounded-md border-0 bg-transparent px-1.5 text-[12.5px] text-fg-3 hover:bg-hover hover:text-fg-2"
+      >
+        {label}
+        {gh.syncing ? <Spinner size={11} /> : <Sym name="refresh" size={16} />}
+      </button>
+    </span>
   );
 }
 
@@ -481,11 +518,12 @@ function TurnLimitCard({ review, stop, lines, onRetry }: { review: ReviewDetail;
 }
 
 /** What the bunny says about this review: how a self-review stands, or what you posted. */
-function reviewMood(review: ReviewDetail, go: (t: Tab) => void): MoodReport | null {
+function reviewMood(review: ReviewDetail, selfPr: SelfPr | null, go: (t: Tab) => void): MoodReport | null {
   if (review.phase === "cancelled") return { mood: "stopped" };
   const done = review.phase === "walkthrough" || review.phase === "submitted";
   if (review.mode === "self") {
     if (!done) return null;
+    if (selfPr) return prMood(selfPr, () => go("submit"));
     const open = review.findings.filter((f) => f.resolvedRun == null && f.decision !== "dismissed");
     if (open.length) {
       const still = open.filter((f) => f.stillOpenRun === review.runNumber).length;
@@ -500,4 +538,17 @@ function reviewMood(review: ReviewDetail, go: (t: Tab) => void): MoodReport | nu
   if (review.postedEvent === "APPROVE") return { mood: "approved", say: `Approved ${pr}.`, go: () => go("status") };
   if (review.postedEvent === "COMMENT") return { mood: "commented", say: `Review posted on ${pr}.`, go: () => go("status") };
   return null;
+}
+
+/** The bunny on a self-review whose PR is on GitHub. */
+function prMood(pr: SelfPr, go: () => void): MoodReport {
+  const S = prSummary(pr);
+  const B = S.blocked;
+  if (pr.state === "merged") return { mood: "shipIt", go };
+  if (pr.state === "closed") return { mood: "prClosed", say: `${S.ref} was closed without merging.`, go };
+  if (B && (B.key === "running" || B.key === "checking")) return { mood: "prChecks", go };
+  if (S.canMerge) return { mood: "prMerge", go };
+  if (B && (B.key === "failed" || B.key === "conflicts"))
+    return { mood: "prBlocked", say: B.key === "failed" ? `${B.title} on ${S.ref}.` : `${S.ref} conflicts with ${pr.base}.`, go };
+  return { mood: "prReview", say: pr.draft ? `${S.ref} is still a draft.` : B?.key === "protected" ? `${S.ref} needs an approval.` : `${S.ref} is in review.`, go };
 }

@@ -1,5 +1,6 @@
 // What a review needs from you next, in words: shared by "On you" and the review home cards.
 import type { ActiveRun, ReviewSummary } from "../shared/types";
+import { parseSnapshot } from "../shared/pr";
 import { readPos, type ReviewPos } from "./api";
 import { timeAgo } from "./components/ui";
 
@@ -71,6 +72,13 @@ export function nextStep(r: ReviewSummary, run?: ActiveRun): NextStep {
   if (r.mode === "self") {
     const open = r.findingsOpen;
     const undecided = r.findingsTotal - r.findingsDecided;
+    const snap = parseSnapshot(r.prSnap);
+    if (snap?.state === "merged")
+      return { ...base, status: "Done · merged", color: "var(--add)", detail: "Merged", reason: `Merged into ${snap.base}${snap.mergedAt ? ` ${timeAgo(snap.mergedAt)}` : ""}.`, action: "View", tab: "submit" };
+    if (snap?.state === "closed")
+      return { ...base, status: "Closed", color: "var(--text-3)", detail: "Closed", reason: `PR #${snap.number} was closed without merging.`, action: "View", tab: "submit" };
+    if (snap)
+      return { ...base, status: `In review · #${snap.number}`, color: "var(--accent)", detail: snap.checksLine, reason: `PR #${snap.number} is open · ${snap.status}. ${snap.checksLine}.`, action: "Open", tab: "submit" };
     if (r.openedPrNumber) {
       return { ...base, status: `PR #${r.openedPrNumber} opened`, color: "var(--add)", detail: "Done", reason: `You opened #${r.openedPrNumber}.`, action: "View", tab: "submit" };
     }
@@ -150,14 +158,21 @@ export function openReviews(reviews: ReviewSummary[], days = 14): ReviewSummary[
   return latestPerPr(reviews).filter((r) => {
     const t = Date.parse(r.updatedAt.includes("T") ? r.updatedAt : `${r.updatedAt.replace(" ", "T")}Z`);
     if (t < since) return false;
-    if (r.mode === "self") return !r.openedPrNumber;
+    // A self-review is finished once its PR merges or closes (while it's open, it's in review).
+    if (r.mode === "self") return selfFinished(r) === false;
     return r.phase !== "submitted";
   });
 }
 
 /** "Approved", "Requested changes · 3 comments", "Self-review · PR opened". */
 export function outcome(r: ReviewSummary): { text: string; color: string } {
-  if (r.mode === "self") return { text: r.openedPrNumber ? `Self-review · opened #${r.openedPrNumber}` : "Self-review", color: "var(--add)" };
+  if (r.mode === "self") {
+    const snap = parseSnapshot(r.prSnap);
+    if (snap?.state === "merged") return { text: `Self-review · merged #${snap.number}`, color: "var(--add)" };
+    if (snap?.state === "closed") return { text: `Self-review · closed #${snap.number}`, color: "var(--text-3)" };
+    if (snap) return { text: `Self-review · in review #${snap.number}`, color: "var(--accent)" };
+    return { text: r.openedPrNumber ? `Self-review · opened #${r.openedPrNumber}` : "Self-review", color: "var(--add)" };
+  }
   const n = r.postedComments ? ` · ${plural(r.postedComments, "comment")}` : "";
   if (r.postedEvent === "APPROVE") return { text: `Approved${n}`, color: "var(--add)" };
   if (r.postedEvent === "REQUEST_CHANGES") return { text: `Requested changes${n}`, color: "var(--warn)" };
@@ -165,3 +180,12 @@ export function outcome(r: ReviewSummary): { text: string; color: string } {
 }
 
 export const ago = (iso: string) => timeAgo(iso);
+
+/**
+ * Is this self-review done? Merged or closed on GitHub. Before PR tracking (no snapshot yet),
+ * opening the PR counted as done.
+ */
+export function selfFinished(r: Pick<ReviewSummary, "prSnap" | "openedPrNumber">): boolean {
+  const snap = parseSnapshot(r.prSnap);
+  return snap ? snap.state !== "open" : r.openedPrNumber != null;
+}
