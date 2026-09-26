@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { HiddenItem, Inbox, InboxEntry } from "../shared/types";
 import { api, navigate, useActivity, useAsync, useLayout, usePath, usePref, useTheme, useUpdate } from "./api";
 import { isHiddenPr, useHiddenItems } from "./hidden";
-import { Bunny, usePageMood, type MoodReport } from "./components/Bunny";
+import { Bunny, useFlash, usePageMood, type MoodReport } from "./components/Bunny";
 import { Invaders, useKonami } from "./components/Invaders";
 import { appleTouchIcon, icon32 } from "@pr-bunny/brand";
 import { ActivityBell } from "./components/ActivityBell";
@@ -220,10 +220,12 @@ function Shell() {
 function useAppMood(runs: ReturnType<typeof useActivity>, ib: ReturnType<typeof inboxState>): MoodReport {
   const update = useUpdate();
   const page = usePageMood();
+  const flash = useFlash();
   if (update?.status === "downloading") return { mood: "working", say: `Downloading ${update.latest?.version ?? "the update"}…`, go: "/settings" };
   if (update?.status === "restarting") return { mood: "working", say: "Restarting…", go: "/settings" };
   const run = runs[0];
   if (run) return { mood: "working", say: run.stage === "recon" ? "Checking out the PR…" : "Reading the diff…", go: `/review/${run.reviewId}` };
+  if (flash) return flash;
   if (page) return page;
   if (update?.status === "available") return { mood: "update", say: `Version ${update.latest?.version} is out. Update from Settings.`, go: "/settings" };
   if (update?.status === "ready") return { mood: "update", say: "Update installed. Restart from Settings to finish.", go: "/settings" };

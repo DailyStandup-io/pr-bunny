@@ -184,12 +184,6 @@ const loadFeed = () => call<NotificationFeed>("/api/notifications").then(feed.se
 
 export const bell = {
   reload: loadFeed,
-  /** The bell was opened: clear the badge. */
-  seen: () => {
-    const f = feed.get();
-    if (f && f.unseen) feed.set({ unseen: 0, items: f.items.map((i) => ({ ...i, seen: true })) });
-    return call("/api/notifications/seen", "POST").catch(() => {});
-  },
   readAll: () => {
     const f = feed.get();
     if (f) feed.set({ unseen: 0, items: f.items.map((i) => ({ ...i, seen: true, read: true })) });
@@ -211,7 +205,9 @@ function go(path: string) {
 /** A click on a notification, in the bell or on the desktop. */
 export async function openNotification(id: number) {
   const f = feed.get();
-  if (f) feed.set({ ...f, items: f.items.map((i) => (i.id === id ? { ...i, seen: true, read: true } : i)) });
+  // Opening one takes it off the badge (the server marks it seen and read too).
+  const was = f?.items.find((i) => i.id === id);
+  if (f) feed.set({ unseen: Math.max(0, f.unseen - (was && !was.seen ? 1 : 0)), items: f.items.map((i) => (i.id === id ? { ...i, seen: true, read: true } : i)) });
   try {
     const r = await call<{ path: string; reviewId?: number; tab?: "findings" }>(`/api/notifications/${id}/open`, "POST");
     if (r.reviewId && r.tab) savePos(r.reviewId, { tab: r.tab, idx: 0 });
