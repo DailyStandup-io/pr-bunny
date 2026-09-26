@@ -14,7 +14,25 @@ export const topic = (reviewId: number) => `review:${reviewId}`;
 /** Every review's events, for the rail spinner and the review home's live cards. */
 export const ACTIVITY = "activity";
 
+/** Server-side listeners (notifications watch phase changes). */
+const listeners = new Set<(ev: LiveEvent) => void>();
+export function onEmit(fn: (ev: LiveEvent) => void) {
+  listeners.add(fn);
+}
+
+/** Pushes a message to every socket subscribed to `topicName` (not kept in any backlog). */
+export function publish(topicName: string, data: unknown) {
+  server?.publish(topicName, JSON.stringify(data));
+}
+
 export function emit(ev: LiveEvent) {
+  for (const fn of listeners) {
+    try {
+      fn(ev);
+    } catch (e) {
+      console.warn("live listener failed:", e);
+    }
+  }
   const list = backlog.get(ev.reviewId) ?? [];
   list.push(ev);
   if (list.length > BACKLOG_LIMIT) list.splice(0, list.length - BACKLOG_LIMIT);

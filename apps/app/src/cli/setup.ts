@@ -234,7 +234,7 @@ export async function setup(argv: string[]) {
     console.log(`\n${c.yellow(`${missing} step${missing === 1 ? "" : "s"} outstanding.`)}${CHECK ? " Run `bunny setup` to fix them." : ""}`);
     process.exit(1);
   }
-  // The rest (agent, repos, review skills) happens in the browser, on first launch.
+  // The rest (agent, repos, notifications, review skills) happens in the browser, on first launch.
   const onboarded = await fetch(`http://127.0.0.1:${PORT}/api/setup`).then((r) => r.json()).then((s: any) => Boolean(s.completedAt), () => true);
   const open = onboarded ? url : `${url}/setup`;
   console.log(`\n  ${c.rose("●")} ${c.bold("All set")} ${c.dim("→")} ${c.cyan(open)}${onboarded ? "" : c.dim("  (finish setup in the browser)")}\n`);

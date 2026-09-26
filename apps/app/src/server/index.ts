@@ -33,12 +33,15 @@ import {
 import { previewSkill, repoSkills, searchFiles } from "./skills";
 import { findSelfReview, openPrFor, startSelfReview, suggestReviewers, type StartSelf } from "./self";
 import { getInbox, repoPrs, searchPrs } from "./inbox";
+import { feed, markAllRead, markSeen, NOTIFY_TOPIC, openNotification, startNotifier } from "./notify";
+import { SERVICE_WORKER } from "./sw";
 import { ACTIVITY, attachServer, getBacklog, topic } from "./live";
 import { activeRuns, continueRecon, getReview, getRow, lastStoppedRun, listReviews, markRead, recoverInterrupted, retryRecon, startReview } from "./reviews";
 
 recoverInterrupted();
 scheduleUpdateChecks();
 startStackRunner();
+startNotifier();
 
 // Remove posted/abandoned PR checkouts now and hourly (see cleanup.ts for the rules).
 const runCleanup = () => {
@@ -287,6 +290,19 @@ const server = Bun.serve<{ reviewId: number }>({
       GET: api(() => ({ settings: getSettings(), modelOptions: MODEL_OPTIONS, providers: PROVIDERS })),
       POST: api(async (req) => ({ settings: updateSettings(await body(req)), modelOptions: MODEL_OPTIONS, providers: PROVIDERS })),
     },
+    // ---------- notifications (the bell; desktop alerts are raised by the open tab) ----------
+    "/api/notifications": { GET: api((req) => feed(Number(new URL(req.url).searchParams.get("limit") ?? 50))) },
+    // The bell was opened: clears the badge.
+    "/api/notifications/seen": { POST: api(() => markSeen()) },
+    "/api/notifications/read": { POST: api(() => markAllRead()) },
+    // A click on a notification: where to go (a review request's scan starts here if it hasn't run).
+    "/api/notifications/:id/open": {
+      POST: api((req: R<"/api/notifications/:id/open">) => openNotification(Number(req.params.id))),
+    },
+    // Handles clicks on desktop notifications (focus the tab, or open one).
+    "/sw.js": (req: Request) =>
+      rejectForeign(req) ?? new Response(SERVICE_WORKER, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } }),
+
     "/api/settings/reset": {
       POST: api(() => ({ settings: resetSettings(), modelOptions: MODEL_OPTIONS, providers: PROVIDERS })),
     },
@@ -451,6 +467,14 @@ const server = Bun.serve<{ reviewId: number }>({
     },
 
     // reviewId 0 = the activity feed (every review's events).
+    // reviewId -1 = notifications.
+    "/ws/notifications": (req: Request, srv: Server<{ reviewId: number }>) => {
+      const blocked = rejectForeign(req);
+      if (blocked) return blocked;
+      if (srv.upgrade(req, { data: { reviewId: -1 } })) return undefined;
+      return fail("Expected a websocket upgrade", 426);
+    },
+
     "/ws/activity": (req: Request, srv: Server<{ reviewId: number }>) => {
       const blocked = rejectForeign(req);
       if (blocked) return blocked;
@@ -468,6 +492,10 @@ const server = Bun.serve<{ reviewId: number }>({
 
   websocket: {
     open(ws) {
+      if (ws.data.reviewId === -1) {
+        ws.subscribe(NOTIFY_TOPIC);
+        return;
+      }
       if (ws.data.reviewId === 0) {
         ws.subscribe(ACTIVITY);
         return;
@@ -477,7 +505,7 @@ const server = Bun.serve<{ reviewId: number }>({
     },
     message() {},
     close(ws) {
-      ws.unsubscribe(ws.data.reviewId === 0 ? ACTIVITY : topic(ws.data.reviewId));
+      ws.unsubscribe(ws.data.reviewId === -1 ? NOTIFY_TOPIC : ws.data.reviewId === 0 ? ACTIVITY : topic(ws.data.reviewId));
     },
   },
 

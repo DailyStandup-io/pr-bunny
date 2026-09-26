@@ -67,7 +67,8 @@ The rest happens in the browser. The first launch opens **setup** (`/setup`):
 2. Connect `gh`.
 3. Link the `bunny` command.
 4. Choose repositories: the checkouts found in `~/Developer` etc., or any folder you add.
-5. Pick each repo's review instructions, with a preview.
+5. Notifications (optional): allow desktop alerts in your browser and pick what nudges you.
+6. Pick each repo's review instructions, with a preview.
 
 Finish saves it all (also written to `~/.pr-bunny/config.json`). Settings › About › **Run setup
 again** reopens it.
@@ -176,6 +177,20 @@ inside a checkout.
 
 Settings › Review › Stacks sets the order, how many at once, the largest stack Review all is offered
 for, and whether to include PRs that are already approved or merged.
+
+## Notifications
+
+The **Activity** bell at the top of the rail collects what happened: review requests and
+assignments, reviews of your own PRs, new commits on PRs you reviewed or in your stacks, a finished
+overview or deep review, a review that failed or ran out of turns, Review all and the
+across-the-stack pass finishing, and new versions. Click one to go straight to the work.
+
+With your browser's permission (asked in setup or Settings › Notifications), the open PR Bunny tab
+also shows them as desktop notifications, even while it's in the background. They're raised by the
+tab itself, so nothing goes through a push service; with every tab closed, events wait in the bell.
+Settings › Notifications picks the events, limits GitHub events to chosen repos, and sets quiet
+hours, staying quiet while PR Bunny is in front, and bundling bursts into one alert. GitHub events
+come from polling `gh` (read-only) every two minutes.
 
 ## Day to day
 

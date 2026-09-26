@@ -5,6 +5,7 @@ import { Page } from "../components/Page";
 import { card, field, MaskIcon, Spinner, Sym, timeAgo } from "../components/ui";
 import { BUNNY_FACES } from "../components/Bunny";
 import { HousekeepingExtras } from "../components/Housekeeping";
+import { NotificationsSection } from "../components/Notifications";
 import claudeLogo from "../assets/claude.svg";
 // OpenAI's official Blossom (cdn.openai.com/brand), drawn in the text colour so it works in both themes.
 import openaiLogo from "../assets/openai.svg";
@@ -225,6 +226,8 @@ export function SettingsPage() {
             <Toggle checked={draft.stackIncludeDone} onChange={(v) => set({ stackIncludeDone: v })} />
           </Row>
         </section>
+
+        <NotificationsSection value={draft.notifications} onChange={(p) => set({ notifications: { ...draft.notifications, ...p } })} />
 
         <section className={card}>
           <Header title="Housekeeping" />
@@ -475,7 +478,7 @@ function About() {
   }[status];
 
   return (
-    <section className={`${card} overflow-hidden`}>
+    <section id="about" className={`${card} scroll-mt-6 overflow-hidden`}>
       <div className="flex items-center gap-3 border-b border-line px-[22px] py-[18px]">
         <h2 className="m-0 flex-1 text-[15px] font-semibold">About</h2>
         <button onClick={() => navigate("/setup")} className="h-8 cursor-pointer rounded-lg border-0 bg-transparent px-2.5 text-[13px] font-medium text-accent hover:bg-accent-soft">

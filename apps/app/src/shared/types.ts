@@ -415,6 +415,8 @@ export interface Settings {
   stackMaxAll: number;
   /** Stacks: include layers already approved, merged or reviewed by you. */
   stackIncludeDone: boolean;
+  /** What notifies you, and how desktop alerts are delivered. */
+  notifications: NotificationSettings;
 }
 
 export interface ModelOption {
@@ -502,6 +504,8 @@ export interface SetupConfig {
   gh: { path: string | null; user: string | null };
   cli: { installed: boolean; path: string };
   repos: Array<{ repo: string; path: string; reviewSkill: string | null }>;
+  /** The notifications step: which events are on, and whether desktop alerts are. Null if skipped. */
+  notifications?: { desktop: boolean; events: NotifyKind[] } | null;
   onboardedAt: string;
 }
 
@@ -549,6 +553,8 @@ export interface SetupInput {
   replaceCli?: boolean;
   /** `reviewSkill`: a file path from the repo's skill list, or null for generic criteria. */
   repos: Array<{ path: string; reviewSkill: string | null }>;
+  /** The notifications step. Left out when it was skipped (the defaults stay). */
+  notifications?: { desktop: boolean; events: Partial<Record<NotifyKind, boolean>> } | null;
 }
 
 // ---------- stacks ----------
@@ -684,6 +690,71 @@ export interface StackBadge {
   /** That stack is running Review all, so it owns this PR's review. */
   running: boolean;
 }
+
+// ---------- notifications ----------
+
+/** Events that can notify you. GitHub ones come from polling `gh`; the rest from the app itself. */
+export type NotifyKind =
+  | "req" // requested as a reviewer
+  | "assign" // assigned a PR
+  | "stackUpd" // a PR in one of your stacks got new commits
+  | "myReview" // your PR got a review
+  | "overview" // the overview is ready
+  | "deep" // the deep review finished
+  | "failed" // a review failed or ran out of turns
+  | "changed" // a PR changed since you reviewed it
+  | "all" // Review all finished on a stack
+  | "across" // the across-the-stack pass is ready
+  | "update"; // a new PR Bunny version
+
+export interface NotificationSettings {
+  /** Desktop alerts from the browser. Off still collects events in the bell. */
+  desktop: boolean;
+  /** Which events notify you (desktop and bell). */
+  events: Record<NotifyKind, boolean>;
+  /** GitHub events: every repo, or only `repos`. */
+  repoMode: "all" | "chosen";
+  repos: string[];
+  /** Hold desktop alerts between quietFrom and quietTo (local "HH:MM"), and all weekend if quietWeekend. */
+  quiet: boolean;
+  quietFrom: string;
+  quietTo: string;
+  quietWeekend: boolean;
+  /** No desktop alert while a PR Bunny tab has focus. */
+  quietWhileFocused: boolean;
+  /** Events within a minute arrive as one desktop alert. */
+  bundle: boolean;
+}
+
+/** One entry in the bell (and the desktop alert it came with). */
+export interface AppNotification {
+  id: number;
+  kind: NotifyKind;
+  /** The desktop alert's title and body. */
+  title: string;
+  body: string;
+  /** The bell's line ("@dana asked you to review") and what it's about (the PR or stack title). */
+  summary: string;
+  subject: string;
+  repo: string | null;
+  pr: number | null;
+  /** Same tag replaces the older desktop alert (one banner per PR). */
+  tag: string;
+  /** Which bunny face goes with it (a key of the mascot's faces). */
+  face: string;
+  createdAt: string;
+  seen: boolean;
+  read: boolean;
+}
+
+export interface NotificationFeed {
+  items: AppNotification[];
+  /** Arrived since the bell was last opened. */
+  unseen: number;
+}
+
+/** Pushed over /ws/notifications. */
+export type NotificationEvent = { type: "notification"; item: AppNotification } | { type: "sync" };
 
 // ---------- cancel and clean up ----------
 

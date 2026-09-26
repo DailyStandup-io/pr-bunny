@@ -5,7 +5,9 @@ import { api, navigate, useActivity, useAsync, useLayout, usePath, usePref, useT
 import { Bunny, usePageMood, type MoodReport } from "./components/Bunny";
 import { Invaders, useKonami } from "./components/Invaders";
 import { appleTouchIcon, icon32 } from "@pr-bunny/brand";
+import { ActivityBell } from "./components/ActivityBell";
 import { InboxCard } from "./components/InboxCard";
+import { startNotifications } from "./notifications";
 import { RailTip } from "./components/RailTip";
 import { RunCard } from "./components/RunCard";
 import { RepoSwitcher } from "./components/RepoSwitcher";
@@ -77,6 +79,8 @@ function Shell() {
   const [pickedRepo, setRepo] = usePref<string | null>("repo", null);
   const inbox = useAsync(api.inbox, []);
   const runs = useActivity();
+  // The bell's feed and desktop alerts (see notifications.ts).
+  useEffect(() => startNotifications(), []);
 
   const reviewMatch = path.match(/^\/review\/(\d+)/);
   const reviewId = reviewMatch ? Number(reviewMatch[1]) : null;
@@ -130,6 +134,7 @@ function Shell() {
       {!layout.narrow && (
         <nav className="sticky top-0 z-30 flex h-screen w-[76px] flex-none flex-col items-center gap-1.5 border-r border-line bg-surface pt-3.5 pb-4">
           <RepoSwitcher repo={repo} repos={inbox.data?.repos ?? []} onPick={pickRepo} />
+          <ActivityBell />
           {nav.map((n) => {
             const button = (
               <button
@@ -196,6 +201,7 @@ function Shell() {
               <span className="text-[11px] font-medium">{n.label}</span>
             </button>
           ))}
+          <ActivityBell compact />
           <Bunny report={bunny} compact />
         </nav>
       )}

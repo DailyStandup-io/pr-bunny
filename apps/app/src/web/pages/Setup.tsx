@@ -1,10 +1,12 @@
-// One-time setup (/setup): agent, GitHub CLI, the `bunny` command, repositories, review skills,
-// then a summary. Everything here only reads, except "Create link" on the terminal step and
+// One-time setup (/setup): agent, GitHub CLI, the `bunny` command, repositories, notifications,
+// review skills, then a summary. Everything here only reads, except "Create link" on the terminal step and
 // "Finish setup", which saves it all in one go. Reopened from Settings › About.
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AgentInfo, CliInfo, Provider, RepoSkills, SetupChecks, SetupConfig, SetupRepo, SetupState, SkillPreview } from "../../shared/types";
+import type { AgentInfo, CliInfo, NotifyKind, Provider, RepoSkills, SetupChecks, SetupConfig, SetupRepo, SetupState, SkillPreview } from "../../shared/types";
 import { api, navigate, useCopy, useTheme, type SettingsResponse } from "../api";
 import { BUNNY_FACES } from "../components/Bunny";
+import { notificationsSummary, NotificationsStep } from "../components/Notifications";
+import { usePermission } from "../notifications";
 import { MaskIcon, Spinner, Sym } from "../components/ui";
 import claudeLogo from "../assets/claude.svg";
 // OpenAI's official Blossom (cdn.openai.com/brand), drawn in the text colour so it works in both themes.
@@ -12,16 +14,21 @@ import openaiLogo from "../assets/openai.svg";
 import dailyStandupLogo from "@pr-bunny/brand/dailystandup.svg";
 import { Icon } from "@pr-bunny/icons";
 
-const STEPS = ["Agent", "GitHub", "Terminal", "Repos", "Skill", "Summary"] as const;
+const STEPS = ["Agent", "GitHub", "Terminal", "Repos", "Notifications", "Skill", "Summary"] as const;
 const TITLES: Array<[string, string]> = [
   ["Choose your coding agent", "PR Bunny drives an agent you're already signed in to on this Mac."],
   ["Connect GitHub", "Required. PR Bunny talks to GitHub only through your gh login."],
   ["Terminal command", "Optional. Kick off a review without opening the browser."],
   ["Repositories", "Where your checkouts live. Optional: you can also paste a PR URL later."],
+  ["Notifications", "Optional. Get a nudge when a PR needs you or a review finishes."],
   ["Review skill", "Use each repo's own review instructions as criteria."],
   ["Review and finish", "Check your choices. Everything here can be changed later in Settings."],
 ];
 const LOGO: Record<Provider, string> = { claude: claudeLogo, codex: openaiLogo };
+/** Step numbers, so the order can change in one place. */
+const NOTIFY = 4;
+const SKILL = 5;
+const SUMMARY = 6;
 const STAGE_LABEL = { recon: "Overview", review: "Deep review", qa: "Questions" } as const;
 
 type Scan = "agents" | "gh" | "repos" | "skills";
@@ -50,6 +57,9 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
+  // The notifications step: the setup toggles, starting from the saved (or default) settings.
+  const [notifyEvents, setNotifyEvents] = useState<Record<NotifyKind, boolean> | null>(null);
+  const perm = usePermission();
   const [narrow, setNarrow] = useState(() => window.innerWidth < 560);
   const reentry = Boolean(state?.completedAt);
 
@@ -98,9 +108,10 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
       const [s, st] = await Promise.all([api.setup(), api.settings()]);
       setState(s);
       setSettings(st);
+      setNotifyEvents(st.settings.notifications.events);
       if (s.completedAt) {
-        setMaxStep(5);
-        setStep(5);
+        setMaxStep(SUMMARY);
+        setStep(SUMMARY);
       }
       scanRepos(true, s);
     })().catch((e) => setErrors({ agents: message(e) }));
@@ -145,7 +156,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
     window.scrollTo(0, 0);
   };
   useEffect(() => {
-    if (step === 4 && repos.some((r) => !skills[r.path]) && !busy.skills) scanSkills();
+    if (step === SKILL && repos.some((r) => !skills[r.path]) && !busy.skills) scanSkills();
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- derived ----------
@@ -161,11 +172,12 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
     const s = skills[r.path];
     return s && "candidates" in s ? s.suggested : null;
   };
-  const satisfied = [agentOk && !busy.agents, ghOk && !busy.gh, !cliOn || cliLinked, repos.length > 0, !busy.skills && repos.every((r) => skills[r.path]), agentOk && ghOk];
+  const satisfied = [agentOk && !busy.agents, ghOk && !busy.gh, !cliOn || cliLinked, repos.length > 0, true, !busy.skills && repos.every((r) => skills[r.path]), agentOk && ghOk];
   const hints = [
     busy.agents ? "" : "Sign in to an agent to continue",
     busy.gh ? "" : "Log in to gh to continue",
     cli?.conflict && !cliLinked ? "Replace the existing file, or skip" : "Create the link, or skip",
+    "",
     "",
     "",
     "Agent and GitHub CLI are required",
@@ -182,16 +194,23 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
       gh: { path: gh?.path ?? null, user: gh?.user ?? null },
       cli: { installed: cliOn && cliLinked, path: cli?.path ?? "~/.local/bin/bunny" },
       repos: repos.map((r) => ({ repo: r.repo, path: r.displayPath, reviewSkill: choiceOf(r) })),
+      notifications: skipped[NOTIFY] || !notifyEvents ? null : { desktop: true, events: (Object.keys(notifyEvents) as NotifyKind[]).filter((k) => notifyEvents[k]) },
       onboardedAt: new Date().toISOString(),
     };
-  }, [settings, provider, gh, cliOn, cliLinked, cli, repos, choices, skills]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settings, provider, gh, cliOn, cliLinked, cli, repos, choices, skills, notifyEvents, skipped]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const finish = async () => {
     if (!provider) return;
     setSaving(true);
     setSaveError(null);
     try {
-      await api.completeSetup({ provider, installCli: cliOn && cliLinked, repos: repos.map((r) => ({ path: r.path, reviewSkill: choiceOf(r) })) });
+      await api.completeSetup({
+        provider,
+        installCli: cliOn && cliLinked,
+        repos: repos.map((r) => ({ path: r.path, reviewSkill: choiceOf(r) })),
+        // Skipped: the notification settings stay as they are.
+        notifications: skipped[NOTIFY] || !notifyEvents ? null : { desktop: true, events: notifyEvents },
+      });
       setFinished(true);
       window.scrollTo(0, 0);
     } catch (e) {
@@ -203,7 +222,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
 
   const next = () => {
     if (!canNext) return;
-    if (step === 5) return void finish();
+    if (step === SUMMARY) return void finish();
     setSkipped((s) => ({ ...s, [step]: false }));
     go(step + 1);
   };
@@ -223,15 +242,15 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
     );
   }
 
-  const face = finished ? BUNNY_FACES.happy : step === 5 ? BUNNY_FACES.shades : BUNNY_FACES.smile;
+  const face = finished ? BUNNY_FACES.happy : step === SUMMARY ? BUNNY_FACES.shades : BUNNY_FACES.smile;
   return (
     <Frame theme={theme} onTheme={() => setPref(theme === "dark" ? "light" : "dark")} face={face}>
       {!finished && (
         <>
-          <nav aria-label="Setup steps" className="grid grid-cols-6 gap-1.5">
+          <nav aria-label="Setup steps" className="grid grid-cols-7 gap-1.5">
             {STEPS.map((label, i) => {
               const cur = i === step;
-              const done = i !== step && i < 5 && (reentry || (i < maxStep && (satisfied[i] || skipped[i])));
+              const done = i !== step && i < SUMMARY && (reentry || (i < maxStep && (satisfied[i] || skipped[i])));
               const reachable = reentry || i <= maxStep;
               return (
                 <button
@@ -255,9 +274,9 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
             })}
           </nav>
           <div className="flex flex-col gap-1">
-            <span className="text-[13px] font-medium text-fg-3">{reentry ? "All steps complete" : step < 5 ? `Step ${step + 1} of 5` : "Summary"}</span>
-            <h1 className="m-0 text-[24px] leading-[1.25] font-semibold tracking-[-0.012em]">{reentry && step === 5 ? "Setup" : TITLES[step]![0]}</h1>
-            <p className="mt-0.5 mb-0 text-[14.5px] text-pretty text-fg-2">{reentry && step === 5 ? "Everything is set up. Change any step, then save." : TITLES[step]![1]}</p>
+            <span className="text-[13px] font-medium text-fg-3">{reentry ? "All steps complete" : step < SUMMARY ? `Step ${step + 1} of ${SUMMARY}` : "Summary"}</span>
+            <h1 className="m-0 text-[24px] leading-[1.25] font-semibold tracking-[-0.012em]">{reentry && step === SUMMARY ? "Setup" : TITLES[step]![0]}</h1>
+            <p className="mt-0.5 mb-0 text-[14.5px] text-pretty text-fg-2">{reentry && step === SUMMARY ? "Everything is set up. Change any step, then save." : TITLES[step]![1]}</p>
           </div>
 
           {step === 0 && (
@@ -312,7 +331,10 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
               }}
             />
           )}
-          {step === 4 && (
+          {step === NOTIFY && notifyEvents && (
+            <NotificationsStep events={notifyEvents} onEvent={(k, on) => setNotifyEvents((e) => (e ? { ...e, [k]: on } : e))} />
+          )}
+          {step === SKILL && (
             <SkillStep
               repos={repos}
               skills={skills}
@@ -323,7 +345,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
               onCheck={scanSkills}
             />
           )}
-          {step === 5 && (
+          {step === SUMMARY && (
             <Summary
               agent={agent}
               settings={settings}
@@ -335,6 +357,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
               choiceOf={choiceOf}
               config={config}
               configPath={state.configPath}
+              notifications={notificationsSummary(perm, Boolean(skipped[NOTIFY]), notifyEvents ?? settings.settings.notifications.events)}
               onEdit={go}
             />
           )}
@@ -349,7 +372,7 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
             )}
             <span className="flex-[1_1_0]" />
             {!satisfied[step] && hints[step] && <span className="text-right text-[13px] text-fg-3">{hints[step]}</span>}
-            {(step === 2 || step === 3) && (
+            {(step === 2 || step === 3 || step === NOTIFY) && (
               <button onClick={skip} className="h-10 cursor-pointer rounded-lg border-0 bg-transparent px-3.5 text-[13.5px] text-fg-2 hover:bg-hover hover:text-fg">
                 Skip
               </button>
@@ -360,8 +383,8 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
               className={`flex h-10 items-center gap-1.5 rounded-lg border-0 pr-3.5 pl-4 text-[13.5px] font-semibold ${canNext || saving ? "cursor-pointer bg-accent text-on-accent" : "cursor-default bg-sunken text-fg-3"}`}
             >
               {saving && <Spinner size={14} light />}
-              {step === 5 ? (saving ? "Saving…" : reentry ? "Save changes" : "Finish setup") : step === 4 ? "Review setup" : "Continue"}
-              {step < 5 && <Sym name="arrow_forward" />}
+              {step === SUMMARY ? (saving ? "Saving…" : reentry ? "Save changes" : "Finish setup") : step === SKILL ? "Review setup" : "Continue"}
+              {step < SUMMARY && <Sym name="arrow_forward" />}
             </button>
           </div>
         </>
@@ -1227,6 +1250,7 @@ function Summary(props: {
   choiceOf: (r: SetupRepo) => Choice;
   config: SetupConfig | null;
   configPath: string;
+  notifications: ReturnType<typeof notificationsSummary>;
   onEdit: (step: number) => void;
 }) {
   const [showJson, setShowJson] = useState(false);
@@ -1244,12 +1268,20 @@ function Summary(props: {
     { label: "Terminal command", value: cliLinked ? "bunny is linked" : props.cliOn ? "Not linked yet" : "Not installed", sub: cliLinked ? props.cli!.path : "", ok: cliLinked, neutral: !props.cliOn, step: 2 },
     { label: "Repositories", value: n ? `${n} ${n === 1 ? "repository" : "repositories"}` : "None yet", sub: n ? repos.map((r) => r.repo).join(", ") : "Add one later by pasting a PR URL", ok: n > 0, neutral: !n, step: 3 },
     {
+      label: "Notifications",
+      value: props.notifications.value,
+      sub: props.notifications.sub,
+      ok: props.notifications.state === "ok",
+      neutral: props.notifications.state === "neutral",
+      step: NOTIFY,
+    },
+    {
       label: "Review skill",
       value: n ? `${withSkill} of ${n} use their own instructions` : "No repositories",
       sub: repos.map((r) => `${r.repo.split("/")[1]}: ${props.choiceOf(r) ?? "generic"}`).join(" · "),
       ok: n > 0 && withSkill > 0,
       neutral: !n || !withSkill,
-      step: 4,
+      step: SKILL,
     },
   ];
   return (
