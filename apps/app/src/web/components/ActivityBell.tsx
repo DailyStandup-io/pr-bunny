@@ -1,5 +1,7 @@
 // The Activity bell at the top of the rail: recent notifications, whether or not desktop alerts
 // are allowed. Opening it clears the badge; clicking an entry goes where its notification would.
+// On the rail, hovering the bell peeks at the panel and clicking pins it open until you click
+// again, press Esc or click outside.
 import { useEffect, useRef, useState } from "react";
 import type { AppNotification, NotificationSettings } from "../../shared/types";
 import { Icon } from "@pr-bunny/icons";
@@ -45,7 +47,10 @@ const isToday = (iso: string) => {
 export function ActivityBell({ compact = false }: { compact?: boolean }) {
   const feed = useFeed();
   const perm = usePermission();
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
+  /** Opened by a click (stays open) rather than by hovering (closes when the pointer leaves). */
+  const [pinned, setPinned] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
   /** The badge count when the bell was opened ("3 new"). */
   const [fresh, setFresh] = useState(0);
@@ -70,13 +75,35 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   const unseen = feed?.unseen ?? 0;
   const allOff = settings ? Object.values(settings.events).every((v) => !v) : false;
   const items = feed?.items ?? [];
-  const toggle = () => {
-    if (open) return setOpen(false);
+  const setOpen = (on: boolean) => {
+    setOpenState(on);
+    if (!on) setPinned(false);
+  };
+  const show = () => {
+    if (open) return;
     setFresh(unseen);
-    setOpen(true);
+    setOpenState(true);
     notifySettings(true).then(setSettings);
     if (unseen) bell.seen();
   };
+  const toggle = () => {
+    if (open && pinned) return setOpen(false);
+    show();
+    setPinned(true);
+  };
+  const clearHover = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+  };
+  const hoverIn = () => {
+    clearHover();
+    if (!open) hoverTimer.current = setTimeout(show, 180);
+  };
+  const hoverOut = () => {
+    clearHover();
+    if (open && !pinned) hoverTimer.current = setTimeout(() => setOpen(false), 280);
+  };
+  useEffect(() => clearHover, []);
   const goSettings = () => {
     setOpen(false);
     navigate("/settings#notifications");
@@ -218,7 +245,7 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <div ref={wrap} className="relative">
+    <div ref={wrap} className="relative" onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
       <button
         onClick={toggle}
         aria-label={unseen ? `Activity, ${unseen} new` : "Activity"}
@@ -229,7 +256,8 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
         <span className="text-[11px] font-medium">Activity</span>
       </button>
       {open && (
-        <div className="absolute top-[3px] left-full z-45" style={{ paddingLeft: RAIL_GAP }}>
+        // Interacting with a peeked panel pins it, so it doesn't vanish mid-click.
+        <div className="absolute top-[3px] left-full z-45" style={{ paddingLeft: RAIL_GAP }} onMouseDown={() => setPinned(true)}>
           {panel}
         </div>
       )}

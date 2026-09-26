@@ -246,7 +246,6 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
                   onMouseEnter={() => setFocus(r.key)}
                   className={`group relative flex flex-wrap items-center ${i ? "border-t border-line" : ""} ${sel.has(r.key) ? "bg-accent-soft" : focus === r.key ? "bg-hover" : ""}`}
                 >
-                  {focus === r.key && <span aria-hidden className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-r-sm bg-accent" />}
                   <RowCheck on={sel.has(r.key)} visible={sel.size > 0 || focus === r.key} onToggle={() => toggle(r.key)} />
                   <button
                     onClick={r.go}

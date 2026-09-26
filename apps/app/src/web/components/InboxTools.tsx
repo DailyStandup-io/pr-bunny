@@ -1,6 +1,7 @@
 // Clearing the inbox: hide a PR "until it changes" or "for good" (one row or a selection), the
 // Hidden tab to bring them back, and the empty inbox. Hiding is local state only: GitHub isn't told.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { HiddenItem } from "../../shared/types";
 import { api } from "../api";
 import { BUNNY_FACES } from "./Bunny";
@@ -140,9 +141,32 @@ export function RowCheck({ on, visible, onToggle }: { on: boolean; visible: bool
 export function HideButton({ onHide, className = "" }: { onHide: (mode: HideMode) => void; className?: string }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLSpanElement>(null);
+  // The menu is portalled to <body> at fixed coordinates, so rounded lists with overflow-hidden
+  // can't clip it. It opens below the button, or above when there's no room.
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open) return setPos(null);
+    const place = () => {
+      const b = box.current?.getBoundingClientRect();
+      if (!b) return;
+      const h = menu.current?.offsetHeight ?? 120;
+      const below = b.bottom + 4 + h <= window.innerHeight - 8;
+      setPos({ top: below ? b.bottom + 4 : Math.max(8, b.top - 4 - h), right: Math.max(8, window.innerWidth - b.right) });
+    };
+    place();
+    requestAnimationFrame(place);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
-    const click = (e: MouseEvent) => box.current && !box.current.contains(e.target as Node) && setOpen(false);
+    const inside = (t: EventTarget | null) => [box.current, menu.current].some((el) => el?.contains(t as Node));
+    const click = (e: MouseEvent) => !inside(e.target) && setOpen(false);
     const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("mousedown", click);
     window.addEventListener("keydown", key);
@@ -186,12 +210,19 @@ export function HideButton({ onHide, className = "" }: { onHide: (mode: HideMode
       >
         <Sym name="expand_more" size={16} />
       </button>
-      {open && (
-        <span role="menu" className="absolute top-[calc(100%+4px)] right-0 z-40 flex w-[280px] flex-col gap-0.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop">
-          {item("change", "visibility_off", "Hide until it changes", "Back on new commits or comments", "E")}
-          {item("good", "do_not_disturb_on", "Hide for good", "Only back if you restore it", "⇧E")}
-        </span>
-      )}
+      {open &&
+        createPortal(
+          <span
+            ref={menu}
+            role="menu"
+            style={pos ? { top: pos.top, right: pos.right } : { top: 0, right: 0, visibility: "hidden" }}
+            className="fixed z-50 flex w-[280px] flex-col gap-0.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop"
+          >
+            {item("change", "visibility_off", "Hide until it changes", "Back on new commits or comments", "E")}
+            {item("good", "do_not_disturb_on", "Hide for good", "Only back if you restore it", "⇧E")}
+          </span>,
+          document.body,
+        )}
     </span>
   );
 }
