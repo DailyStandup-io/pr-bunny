@@ -22,7 +22,7 @@ dist/<version>/manifest.json
   `v<version>`, with every file above attached flat. GitHub's `releases/latest/download/<file>`
   always serves the newest non-draft, non-prerelease release, so "the current version" is simply
   the latest release.
-- **prbunny.dev:** `https://prbunny.dev/releases/…` redirects there (`apps/web/next.config.ts`).
+- **prbunny.dev:** `https://prbunny.dev/releases/…` redirects there (`apps/web/app/releases/[...path]/route.ts`, which also counts installs and updates).
   `latest.json` and `latest` go to `releases/latest/download/…`; `<version>/<file>` goes to
   `releases/download/v<version>/<file>`. Set `RELEASES_ORIGIN` on the site to move storage
   elsewhere, laid out like `dist/`.
