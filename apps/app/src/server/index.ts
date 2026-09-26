@@ -1,3 +1,5 @@
+// First: in demo mode this refuses to start unless gh/claude/codex are the fakes (see demo.ts).
+import { DEMO } from "./demo";
 import type { BunRequest, Server } from "bun";
 import type { ReviewEvent } from "../shared/types";
 import index from "../web/index.html";
@@ -35,6 +37,7 @@ import { findSelfReview, openPrFor, startSelfReview, suggestReviewers, type Star
 import { getInbox, repoPrs, searchPrs } from "./inbox";
 import { feed, markAllRead, markSeen, NOTIFY_TOPIC, openNotification, startNotifier } from "./notify";
 import { SERVICE_WORKER } from "./sw";
+import { avatarSvg } from "./avatar";
 import { ACTIVITY, attachServer, getBacklog, topic } from "./live";
 import { activeRuns, continueRecon, getReview, getRow, lastStoppedRun, listReviews, markRead, recoverInterrupted, retryRecon, startReview } from "./reviews";
 
@@ -108,7 +111,20 @@ const server = Bun.serve<{ reviewId: number }>({
     "/setup": index,
 
     // For `bunny`: is the server up, which version, and where to open the UI.
-    "/api/health": { GET: api(() => ({ ok: true, version: VERSION, name: CODENAME, url: publicUrl() })) },
+    "/api/health": { GET: api(() => ({ ok: true, version: VERSION, name: CODENAME, url: publicUrl(), demo: DEMO })) },
+
+    // Demo mode only: generated avatars for the demo's fictional people (outside demo mode the UI
+    // loads github.com/<login>.png as always).
+    "/api/avatar/:login": {
+      GET: (req: R<"/api/avatar/:login">) => {
+        const blocked = rejectForeign(req);
+        if (blocked) return blocked;
+        if (!DEMO) return fail("Not found", 404);
+        return new Response(avatarSvg(decodeURIComponent(req.params.login)), {
+          headers: { "content-type": "image/svg+xml; charset=utf-8", "cache-control": "public, max-age=86400" },
+        });
+      },
+    },
 
     // ---------- updates (installing and restarting only from clicks in Settings) ----------
     "/api/update": { GET: api(() => updateState()) },

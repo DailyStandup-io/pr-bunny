@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Finding, LayerState, ReviewDetail, ReviewEvent, Severity, StackDetail, StackFinding, StackLayer, StackSubmissionLayer } from "../../shared/types";
 import { api, navigate, useCopy, useLayout, useNow } from "../api";
+import { avatarUrl } from "../avatar";
 import { useBunnyMood, type MoodReport } from "../components/Bunny";
 import { DISMISS_REASONS, SELF_REASONS, SEVERITY, Snippet } from "../components/Walkthrough";
 import { Inline, Spinner, Sym, card, plain } from "../components/ui";
@@ -565,7 +566,7 @@ function LayerRow({ layer: l, pos, stack, busy, act, first }: { layer: StackLaye
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-fg-2">
           <span className="inline-flex items-center gap-[5px]">
-            <img src={`https://github.com/${l.author}.png?size=36`} alt="" className="size-[18px] rounded-full bg-sunken" />
+            <img src={avatarUrl(l.author, 36)} alt="" className="size-[18px] rounded-full bg-sunken" />
             {l.author}
           </span>
           <span className={`rounded border px-[7px] py-px text-[11px] font-semibold ${mode.cls}`}>{mode.label}</span>

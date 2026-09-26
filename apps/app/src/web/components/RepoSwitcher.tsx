@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import type { RepoOption } from "../../shared/types";
 import { railTipClass, useRailPopover } from "./RailTip";
+import { avatarUrl as userAvatar } from "../avatar";
 import { field, Sym, timeAgo } from "./ui";
 
 const owner = (repo: string) => repo.split("/")[0] ?? repo;
-const avatarUrl = (repo: string) => `https://github.com/${owner(repo)}.png?size=64`;
+const avatarUrl = (repo: string) => userAvatar(owner(repo), 64);
 
 /** Org avatar with the owner's initial underneath, which shows until (or if) the image loads. */
 export function RepoAvatar({ repo, size, className }: { repo: string | null; size: number; className: string }) {
