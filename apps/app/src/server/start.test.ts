@@ -6,6 +6,7 @@ import type { PrView } from "./gh";
 
 const real = await import("./gh");
 let prViewCalls = 0;
+let diffsToServe = 0;
 const ME = "me";
 mock.module("./gh", () => ({
   ...real,
@@ -32,16 +33,32 @@ mock.module("./gh", () => ({
     };
   },
   viewer: async () => ME,
-  prDiff: () => new Promise<string>(() => {}), // never resolves: the review stays in flight
+  // Never resolves, so the review stays in flight; a re-review test can serve a few diffs first.
+  prDiff: () => (diffsToServe > 0 ? (diffsToServe--, Promise.resolve("")) : new Promise<string>(() => {})),
   listOpenPrs: async () => [],
 }));
+// A re-review goes straight to the deep review: don't run it, so the new review stays "read" (in flight).
+const realDeep = await import("./deep");
+mock.module("./deep", () => ({ ...realDeep, startDeepReview: () => {} }));
+// Never run a real agent (e.g. a recon that got a served diff).
+const realAgents = await import("./agents");
+mock.module("./agents", () => ({ ...realAgents, runAgent: async () => { throw new Error("No agent in tests"); } }));
 
 const { db } = await import("./db/db");
 const { startReview, setPhase } = await import("./reviews");
 const { startSelfReview } = await import("./self");
 const { startLayer } = await import("./stacks");
+const { startRereview } = await import("./actions");
 
 const REPO = "acme/widgets";
+/** A finished review of an older commit of the PR, to re-review. */
+const finishedReview = (pr: number) =>
+  (db
+    .query(
+      `INSERT INTO reviews (repo_id, pr_number, title, author, url, head_sha, head_ref, base_ref, phase)
+       SELECT id, ?, 'PR', 'someone', '', 'old', 'b', 'main', 'walkthrough' FROM repos WHERE owner = 'acme' AND name = 'widgets' RETURNING id`,
+    )
+    .get(pr) as { id: number }).id;
 const reviewsOf = (pr: number) =>
   db.query("SELECT v.id, v.mode, v.phase FROM reviews v JOIN repos r ON r.id = v.repo_id WHERE r.owner = 'acme' AND r.name = 'widgets' AND v.pr_number = ?").all(pr) as Array<{
     id: number;
@@ -126,5 +143,45 @@ describe("a stack running Review all owns its PRs' reviews", () => {
     expect(await startLayer(stackId, 12)).toBe(yours);
     expect(layerReview(stackId, 12)).toBe(yours);
     expect(reviewsOf(12).filter((r) => r.phase === "recon_running")).toHaveLength(1);
+  });
+});
+
+describe("re-review: one at a time per PR", () => {
+  test("concurrent re-reviews of the same PR give one new review", async () => {
+    const prev = finishedReview(5);
+    diffsToServe = 3; // enough for all three, were the guard missing
+    const ids = await Promise.all([startRereview(prev), startRereview(prev), startRereview(prev)]);
+    diffsToServe = 0;
+    expect(new Set(ids).size).toBe(1);
+    expect(reviewsOf(5).filter((r) => r.id !== prev)).toEqual([{ id: ids[0]!, mode: "peer", phase: "read" }]);
+    // Once it's running, another re-review returns it.
+    expect(await startRereview(prev)).toBe(ids[0]!);
+    expect(reviewsOf(5)).toHaveLength(2);
+  });
+
+  test("a re-review racing a start of the same PR gives one review", async () => {
+    const prev = finishedReview(6);
+    diffsToServe = 2;
+    const [a, b] = await Promise.all([startRereview(prev), startReview(`${REPO}#6`)]);
+    diffsToServe = 0;
+    expect(b).toBe(a);
+    expect(reviewsOf(6).filter((r) => r.id !== prev)).toHaveLength(1);
+
+    // The other way round.
+    const prev7 = finishedReview(7);
+    diffsToServe = 2;
+    const [c, d] = await Promise.all([startReview(`${REPO}#7`), startRereview(prev7)]);
+    diffsToServe = 0;
+    expect(d).toBe(c);
+    expect(reviewsOf(7).filter((r) => r.id !== prev7)).toHaveLength(1);
+  });
+
+  test("a re-review of a stack layer becomes the layer's review", async () => {
+    const prev = finishedReview(12);
+    db.run("UPDATE reviews SET phase = 'failed' WHERE pr_number = 12 AND phase = 'recon_running'");
+    diffsToServe = 1;
+    const id = await startRereview(prev);
+    diffsToServe = 0;
+    expect(layerReview(stackId, 12)).toBe(id);
   });
 });
