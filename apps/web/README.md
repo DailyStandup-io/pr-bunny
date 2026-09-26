@@ -10,8 +10,16 @@ bun run build:web
 ```
 
 - `/install` serves `apps/app/scripts/install.sh`, read at build time (`/install.sh` rewrites to it).
-- `/releases/*` proxies to `RELEASES_ORIGIN` when that's set (where release binaries are uploaded),
-  so the installer and the app's updater only talk to prbunny.dev.
+- `/releases/*` (`app/releases/[...path]/route.ts`) redirects to GitHub Releases, or to
+  `RELEASES_ORIGIN` when that's set, so the installer and the app's updater only talk to prbunny.dev.
+  On the way it counts, anonymously (`lib/counts.ts`, only counters, no IPs or IDs): installs
+  (`/releases/latest?arch=`), update checks by running version (`latest.json?v=`) and updates
+  (`<version>/<file>?from=`). Counts are recorded after the redirect is sent, with a short timeout,
+  so storage being down never breaks a download.
+- `/stats` shows the counts. It needs `STATS_TOKEN` (`Authorization: Bearer …` or `?token=…`) and is a
+  404 otherwise; it's `noindex` and disallowed in `robots.txt`. `bun run stats` (here or at the root)
+  prints the same numbers, reading `UPSTASH_REDIS_REST_*` from the environment or `.env.local`
+  (`vercel env pull .env.local`).
 - Bunny art comes from `@pr-bunny/brand`. It's licensed and not in the repo: without it the page
   builds with no bunny images.
 
@@ -21,6 +29,16 @@ bun run build:web
     - `PR_BUNNY_ART_TOKEN`: a fine-grained token with read-only Contents access to
       `DailyStandup-io/pr-bunny-art`. The art is fetched before the build.
     - `PR_BUNNY_REQUIRE_ART=1`: no art, no deploy.
-    - `HUGEICONS_TOKEN` (optional): the Pro icons for the theme toggle. `app/icon.png`, `apple-icon.png` and `favicon.ico` are written from
-  it by the brand generator (gitignored). Set `PR_BUNNY_REQUIRE_ART=1` on the production deploy so
-  a build without the art fails.
+    - `HUGEICONS_TOKEN` (optional): the Pro icons for the theme toggle.
+    - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`: the counts' store (Upstash Redis from the
+      Vercel Marketplace, free tier; its `KV_REST_API_URL` / `KV_REST_API_TOKEN` also work). Without
+      them the redirects work and nothing is counted.
+    - `STATS_TOKEN`: the secret for `/stats`. Unset, `/stats` is always a 404.
+    - `VERCEL_ANALYTICS_EVENTS=1` (optional): also send each count to Vercel Web Analytics as a
+      custom event (`Install`, `Update check`, `Update`). Custom events need the Pro plan; leave it
+      unset on Hobby.
+    - `RELEASES_ORIGIN` (optional): serve release files from another host laid out like `dist/`.
+
+  `app/icon.png`, `apple-icon.png` and `favicon.ico` are written from the art by the brand generator
+  (gitignored). Set `PR_BUNNY_REQUIRE_ART=1` on the production deploy so a build without the art
+  fails.

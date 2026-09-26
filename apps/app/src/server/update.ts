@@ -127,7 +127,8 @@ async function download(version: string) {
   let lastError: unknown = null;
   for (const source of sources) {
     try {
-      return await downloadFrom(source.file(version, asset), version);
+      const file = source.file(version, asset);
+      return await downloadFrom(source.download?.(version, asset) ?? file, `${file}.sha256`, version);
     } catch (e) {
       lastError = e;
       if (e instanceof VerifyError) throw e; // a bad file, not a bad host: don't try elsewhere
@@ -139,12 +140,12 @@ async function download(version: string) {
 /** The file arrived but isn't right (checksum, won't run): stop rather than try another host. */
 class VerifyError extends Error {}
 
-async function downloadFrom(url: string, version: string) {
+async function downloadFrom(url: string, sumUrl: string, version: string) {
   const target = process.execPath;
   const tmp = `${target}.download`;
   rmSync(tmp, { force: true });
   try {
-    const sumRes = await fetch(`${url}.sha256`, { signal: AbortSignal.timeout(15_000) });
+    const sumRes = await fetch(sumUrl, { signal: AbortSignal.timeout(15_000) });
     if (!sumRes.ok) throw new Error(`checksum: ${sumRes.status} ${sumRes.statusText}`);
     const expected = (await sumRes.text()).trim().split(/\s+/)[0]!.toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error("the checksum file is malformed");

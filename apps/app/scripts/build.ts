@@ -60,7 +60,8 @@ async function checkInstaller(): Promise<string[]> {
   for (const t of built) if (!declared.includes(t)) problems.push(`install.sh doesn't list target ${t} on its "# targets:" line (and may not map uname to it)`);
   for (const t of declared) if (!built.includes(t as never)) problems.push(`install.sh lists target ${t}, which the build doesn't produce`);
   if (!text.includes('bunny-${OS}-${ARCH}')) problems.push('install.sh no longer downloads "bunny-${OS}-${ARCH}"; asset names changed?');
-  if (!text.includes('"$BASE/latest"')) problems.push('install.sh no longer reads "$BASE/latest" for the current version');
+  if (!text.includes('"$BASE/latest$COUNT"')) problems.push('install.sh no longer reads "$BASE/latest$COUNT" for the current version');
+  if (!text.includes('COUNT="?arch=${OS}-${ARCH}"')) problems.push('install.sh no longer sends ?arch=${OS}-${ARCH} (the install count on prbunny.dev)');
   if ((await $`sh -n ${INSTALLER}`.quiet().nothrow()).exitCode !== 0) problems.push("install.sh has a shell syntax error (sh -n)");
   return problems;
 }
