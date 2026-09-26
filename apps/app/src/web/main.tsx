@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Inbox, InboxEntry } from "../shared/types";
+import { setDemoAvatars } from "./avatar";
 import { api, navigate, useActivity, useAsync, useLayout, usePath, usePref, useTheme, useUpdate } from "./api";
 import { Bunny, usePageMood, type MoodReport } from "./components/Bunny";
 import { Invaders, useKonami } from "./components/Invaders";
@@ -241,4 +242,9 @@ function NavIcon({ icon, dot, busy = false }: { icon: IconName; dot: boolean; bu
   );
 }
 
+// Demo mode swaps every avatar for a generated one; know which before anything renders.
+await api
+  .health()
+  .then((h) => setDemoAvatars(Boolean(h.demo)))
+  .catch(() => {});
 createRoot(document.getElementById("root")!).render(<App />);

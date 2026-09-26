@@ -1,0 +1,10 @@
+#!/usr/bin/env bun
+// Fake Codex CLI for the PR Bunny demo and tests. See src/mock/agents-cli.ts.
+import { codexMain } from "../agents-cli";
+
+try {
+  process.exit(await codexMain(process.argv.slice(2)));
+} catch (e) {
+  process.stderr.write(`mock codex: ${e instanceof Error ? e.stack ?? e.message : String(e)}\n`);
+  process.exit(1);
+}

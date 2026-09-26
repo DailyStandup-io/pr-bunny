@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ActiveRun, Inbox, InboxEntry, SelfSources } from "../../shared/types";
 import { api, navigate, savePos, useAsync } from "../api";
+import { avatarUrl } from "../avatar";
 import { Page } from "../components/Page";
 import { Spinner, Sym, timeAgo } from "../components/ui";
 import { nextStep, openReviews, shortRef } from "../reviewState";
@@ -408,7 +409,7 @@ export function Avatar({ login, size, round = false, title }: { login: string; s
     >
       {login[0]?.toUpperCase()}
       <img
-        src={`https://github.com/${login}.png?size=64`}
+        src={avatarUrl(login, 64)}
         alt=""
         onLoad={() => setOk(true)}
         className="absolute inset-0 size-full object-cover"
