@@ -71,11 +71,24 @@ export function stackTree(open: OpenPr[], number: number): TreeNode[] | null {
   return out.length > 1 ? out : null;
 }
 
-/** "2 of 5" for a PR in a stack, or null. */
+/** "2 of 5" for a PR in a stack, or null, plus the saved stack it's in and whether that's running Review all. */
 export async function stackBadge(repo: string, number: number): Promise<StackBadge | null> {
   const tree = stackTree(await openPrs(repo).catch(() => []), number);
   if (!tree) return null;
-  return { pos: tree.findIndex((n) => n.pr.number === number) + 1, size: tree.length };
+  const [owner, name] = repo.split("/");
+  const saved = db
+    .query(
+      `SELECT s.id, s.run_state AS runState FROM stacks s JOIN repos r ON r.id = s.repo_id
+       JOIN stack_layers l ON l.stack_id = s.id AND l.pr_number = ? AND l.gh_state = 'open'
+       WHERE r.owner = ? AND r.name = ? ORDER BY (s.run_state = 'running') DESC, s.updated_at DESC LIMIT 1`,
+    )
+    .get(number, owner!, name!) as { id: number; runState: string } | null;
+  return {
+    pos: tree.findIndex((n) => n.pr.number === number) + 1,
+    size: tree.length,
+    stackId: saved?.id ?? null,
+    running: saved?.runState === "running",
+  };
 }
 
 /** Adds stack badges to inbox/search entries (one gh call per repo, cached). */
@@ -139,6 +152,19 @@ function ordered(rows: LayerRow[]): LayerRow[] {
   // Roots: on the base branch, or whose parent left the stack (merged into the base).
   for (const r of rows.filter((x) => x.parent_pr === null || !known.has(x.parent_pr)).sort((a, b) => a.depth - b.depth || a.pr_number - b.pr_number)) visit(r);
   return out;
+}
+
+/** The stack running Review all that owns this review (as one of its layers), for the review page. */
+export function runningStackFor(reviewId: number): { id: number; title: string; pos: number; size: number } | null {
+  const s = db
+    .query(
+      `SELECT s.id, s.title FROM stack_layers l JOIN stacks s ON s.id = l.stack_id
+       WHERE l.review_id = ? AND s.run_state = 'running' ORDER BY s.updated_at DESC LIMIT 1`,
+    )
+    .get(reviewId) as { id: number; title: string } | null;
+  if (!s) return null;
+  const layers = ordered(layerRows(s.id)).filter((l) => l.gh_state === "open");
+  return { id: s.id, title: s.title, pos: layers.findIndex((l) => l.review_id === reviewId) + 1, size: layers.length };
 }
 
 // ---------- open / sync ----------
@@ -494,7 +520,10 @@ export async function startLayer(id: number, pr: number): Promise<number> {
   if (!s) throw new Error("Stack not found");
   const l = layerRows(id).find((x) => x.pr_number === pr);
   if (!l) throw new Error(`#${pr} isn't in this stack`);
-  const r = l.review_id ? reviewBits(l.review_id) : null;
+  linkReviews(id); // act on the PR's latest review, not a stale link
+  const current = layerRows(id).find((x) => x.pr_number === pr)?.review_id ?? null;
+  const r = current ? reviewBits(current) : null;
+  // `fresh` never starts a second run: startReview returns the PR's running review if there is one.
   const reviewId = await startReview(`${s.owner}/${s.name}#${pr}`, undefined, { fresh: r?.phase === "failed" });
   db.run("UPDATE stack_layers SET review_id = ?, skipped = 0 WHERE stack_id = ? AND pr_number = ?", [reviewId, id, pr]);
   touch(id);
@@ -509,6 +538,8 @@ async function tickStack(id: number) {
   try {
     const s = stackRow(id);
     if (!s) return;
+    // Follow each PR's latest review first, so a review started from the inbox is seen as this layer's run.
+    linkReviews(id);
     const settings = getSettings();
     const layers = await buildLayers(s);
     const done = (l: StackLayer) => l.state === "merged" || (!settings.stackIncludeDone && (l.state === "approved" || l.state === "submitted"));
@@ -527,6 +558,7 @@ async function tickStack(id: number) {
     for (const l of running ? queue : []) {
       if (inFlight >= settings.stackConcurrency) break;
       if (l.state !== "waiting" && !include.includes(l)) continue;
+      // Returns the PR's running review instead of starting a second one (even with `fresh`).
       const reviewId = await startReview(`${s.owner}/${s.name}#${l.pr}`, undefined, { fresh: include.includes(l) });
       db.run("UPDATE stack_layers SET review_id = ? WHERE stack_id = ? AND pr_number = ?", [reviewId, id, l.pr]);
       inFlight++;

@@ -157,6 +157,7 @@ export async function getReview(id: number): Promise<ReviewDetail | null> {
   const stack = db
     .query("SELECT pr_number AS number, title, head_ref AS headRef, base_ref AS baseRef, relation, depth FROM stack_links WHERE review_id = ?")
     .all(id) as StackPr[];
+  const { runningStackFor } = await import("./stacks"); // stacks.ts imports this module
   return {
     ...base,
     headSha: x.head_sha,
@@ -182,6 +183,7 @@ export async function getReview(id: number): Promise<ReviewDetail | null> {
     includeDirty: Boolean(x.include_dirty),
     dirtyFiles: x.dirty_files,
     reviewerQuestions: x.reviewer_questions_json ? (JSON.parse(x.reviewer_questions_json) as ReviewerQuestion[]) : [],
+    runningStack: runningStackFor(id),
     prMessages: db
       .query("SELECT id, role, content, created_at AS createdAt FROM review_messages WHERE review_id = ? ORDER BY id")
       .all(id) as FindingMessage[],
@@ -316,19 +318,74 @@ export async function trackedRun<T>(
 // ---------- recon ----------
 
 /**
+ * One start per PR at a time. Starts are check-then-insert around network calls (prView, viewer),
+ * so two near-simultaneous callers (a click, the CLI, the stack runner's 3s tick) would otherwise
+ * both see "no review" and both insert. Concurrent callers share the first caller's promise.
+ */
+const starting = new Map<string, Promise<number>>();
+const prKey = (ref: PrRef) => `${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase();
+
+/** Runs `start` unless a start for the same PR is already in flight, in which case it joins that one. */
+export function startOnce(ref: PrRef, start: () => Promise<number>): Promise<number> {
+  const key = prKey(ref);
+  const inFlight = starting.get(key);
+  if (inFlight) return inFlight;
+  const p = start().finally(() => starting.delete(key));
+  starting.set(key, p);
+  return p;
+}
+
+/** A review of this PR (peer or self) that's running right now: scanning or deep reviewing. */
+export function activeReviewFor(ref: PrRef): number | null {
+  if (!ref.number) return null;
+  const row = db
+    .query(
+      `SELECT v.id FROM reviews v JOIN repos r ON r.id = v.repo_id
+       WHERE r.owner = ? AND r.name = ? AND v.pr_number = ? AND v.phase IN ('recon_running', 'reviewing', 'read')
+       ORDER BY v.id DESC LIMIT 1`,
+    )
+    .get(ref.owner, ref.repo, ref.number) as { id: number } | null;
+  return row?.id ?? null;
+}
+
+/** Points every stack layer for this PR at `reviewId`, so a stack running Review all owns the PR's one review. */
+export function adoptIntoStacks(ref: PrRef, reviewId: number): number {
+  if (!ref.number) return reviewId;
+  db.run(
+    `UPDATE stack_layers SET review_id = ?
+     WHERE pr_number = ? AND (review_id IS NULL OR review_id != ?)
+       AND stack_id IN (SELECT s.id FROM stacks s JOIN repos r ON r.id = s.repo_id WHERE r.owner = ? AND r.name = ?)`,
+    [reviewId, ref.number, reviewId, ref.owner, ref.repo],
+  );
+  return reviewId;
+}
+
+/**
  * Creates a review for the PR and kicks off recon in the background. If this exact commit already
- * has a live (non-failed) review, returns that instead of starting over.
+ * has a live (non-failed) review, returns that instead of starting over. A review of the PR that's
+ * still running is always returned, even with `fresh` (which only skips reusing a finished one):
+ * a PR has one active review at a time. Whatever's returned becomes the PR's stack layer review,
+ * so a start from the inbox joins a stack that's running Review all instead of racing it.
  */
 export async function startReview(input: string, defaultRepo?: string, opts: { fresh?: boolean } = {}): Promise<number> {
   const ref = parsePrRef(input, defaultRepo || lastRepo());
+  return startOnce(ref, async () => adoptIntoStacks(ref, await startReviewNow(ref, opts)));
+}
+
+async function startReviewNow(ref: PrRef, opts: { fresh?: boolean }): Promise<number> {
+  const running = activeReviewFor(ref);
+  if (running) return running;
   const pr = await prView(ref);
 
   // Your own PR: that's a self-review (findings stay private, "Open PR"/re-run flow), not a peer review.
   if (isMine(pr.author, await viewer().catch(() => null))) {
-    const { startSelfReview } = await import("./self"); // self.ts imports this module
-    return (await startSelfReview({ repo: `${ref.owner}/${ref.repo}`, pr: pr.number })).id;
+    const { startSelfPr } = await import("./self"); // self.ts imports this module
+    return (await startSelfPr(ref, pr)).id;
   }
 
+  // Re-check after the network calls, right before inserting.
+  const runningNow = activeReviewFor(ref);
+  if (runningNow) return runningNow;
   const existing = latestReviewFor(`${ref.owner}/${ref.repo}`, pr.number);
   if (!opts.fresh && existing && existing.headSha === pr.headRefOid && existing.phase !== "failed") return existing.id;
 

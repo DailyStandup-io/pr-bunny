@@ -6,10 +6,10 @@ import type { SuggestedReviewer } from "../shared/types";
 import { db } from "./db/db";
 import { ensureWorktree } from "./deep";
 import { commitLog, currentBranch, diffWithStats, prepareSelfWorktree } from "./git";
-import { addReviewers, createPr, parsePrRef, prForBranch, prView, recentCommitters, remoteBranchSha, viewer } from "./gh";
+import { addReviewers, createPr, parsePrRef, prForBranch, prView, recentCommitters, remoteBranchSha, viewer, type PrRef, type PrView } from "./gh";
 import { checkoutInfo, defaultBase, rememberCheckout } from "./local";
 import { emit } from "./live";
-import { getRow, insertReview, localPrView, runRecon, setPhase } from "./reviews";
+import { adoptIntoStacks, getRow, insertReview, localPrView, runRecon, setPhase, startOnce } from "./reviews";
 
 export interface StartSelf {
   /** A path inside your checkout (the CLI sends its cwd). */
@@ -38,19 +38,37 @@ function existingSelf(repo: string, where: string, arg: string | number): number
   return row?.id ?? null;
 }
 
+/**
+ * Self-review of your own PR: reopens the latest non-failed one, else starts one. Callers hold the
+ * PR's start guard (`startOnce`); the reuse check is repeated after `prView`, right before inserting.
+ */
+export async function startSelfPr(ref: PrRef, known?: PrView): Promise<{ id: number; reused: boolean }> {
+  const repo = `${ref.owner}/${ref.repo}`;
+  const reused = existingSelf(repo, "v.pr_number = ?", ref.number);
+  if (reused) return { id: reused, reused: true };
+  const pr = known ?? (await prView(ref));
+  const again = existingSelf(repo, "v.pr_number = ?", ref.number);
+  if (again) return { id: again, reused: true };
+  const id = insertReview(ref, pr, "recon_running");
+  db.run("UPDATE reviews SET mode = 'self' WHERE id = ?", [id]);
+  runRecon(id, ref, pr).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
+  return { id, reused: false };
+}
+
 /** Starts (or reopens) a self-review and kicks off its overview in the background. */
 export async function startSelfReview(input: StartSelf): Promise<{ id: number; reused: boolean }> {
   if (input.pr) {
     const repo = input.repo ?? (input.localPath ? (await checkoutInfo(input.localPath)).repo : null);
     if (!repo) throw new Error("Which repo? Pass `repo` or run it from inside a checkout.");
-    const reused = existingSelf(repo, "v.pr_number = ?", input.pr);
-    if (reused) return { id: reused, reused: true };
     const ref = parsePrRef(`${repo}#${input.pr}`);
-    const pr = await prView(ref);
-    const id = insertReview(ref, pr, "recon_running");
-    db.run("UPDATE reviews SET mode = 'self' WHERE id = ?", [id]);
-    runRecon(id, ref, pr).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
-    return { id, reused: false };
+    // Shares startReview's one-start-per-PR guard, so a concurrent start of the same PR joins this one.
+    let reused = true;
+    const id = await startOnce(ref, async () => {
+      const r = await startSelfPr(ref);
+      reused = r.reused;
+      return adoptIntoStacks(ref, r.id);
+    });
+    return { id, reused };
   }
 
   if (!input.localPath) throw new Error("No checkout to review. Run `rp review` inside one, or pick a branch.");
@@ -62,11 +80,11 @@ export async function startSelfReview(input: StartSelf): Promise<{ id: number; r
   if (!safeRef(name) || !safeRef(base)) throw new Error("That branch name isn't one git would accept.");
   if (name === base) throw new Error(`You're on ${base}. Check out the branch you want reviewed.`);
 
-  const reused = existingSelf(repo, "v.head_ref = ? AND v.pr_number = 0", name);
-  if (reused) return { id: reused, reused: true };
-
   const [owner, repoName] = repo.split("/") as [string, string];
   const me = await viewer().catch(() => "you");
+  // Checked after the last await, so two starts of the same branch can't both insert.
+  const reused = existingSelf(repo, "v.head_ref = ? AND v.pr_number = 0", name);
+  if (reused) return { id: reused, reused: true };
   // Insert first so the snapshot has a review id for its worktree path.
   const placeholder = {
     number: 0, title: name, body: "", url: `https://github.com/${repo}/compare/${base}...${name}`, author: me, isDraft: false, state: "OPEN",
