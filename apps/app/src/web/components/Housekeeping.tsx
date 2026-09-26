@@ -2,8 +2,9 @@
 // list of PRs hidden from the inbox. Saved as you change them (not through the Settings save bar).
 // All local: clearing and hiding never touch GitHub.
 import { useEffect, useState } from "react";
-import type { HiddenItem, HousekeepingPrefs } from "../../shared/types";
+import type { HousekeepingPrefs } from "../../shared/types";
 import { api } from "../api";
+import { setHiddenItems, useHiddenItems } from "../hidden";
 import { field, Sym } from "./ui";
 
 const CLEAR_OPTIONS: Array<[number, string]> = [
@@ -30,12 +31,13 @@ function Line({ label, hint, children }: { label: string; hint: string; children
 
 export function HousekeepingExtras() {
   const [prefs, setPrefs] = useState<HousekeepingPrefs | null>(null);
-  const [hidden, setHidden] = useState<HiddenItem[] | null>(null);
+  // The app-wide hidden list, so restoring here brings the PR back on the rail and the inbox too.
+  const snap = useHiddenItems();
+  const hidden = snap.loaded ? snap.items : null;
   const [all, setAll] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     api.housekeeping().then(setPrefs, (e) => setErr(String(e.message ?? e)));
-    api.hidden().then(setHidden, () => setHidden([]));
   }, []);
 
   const save = async (patch: Partial<HousekeepingPrefs>) => {
@@ -49,7 +51,7 @@ export function HousekeepingExtras() {
   };
   const restore = async (keys: string[]) => {
     try {
-      setHidden(await api.unhide(keys));
+      setHiddenItems(await api.unhide(keys));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -89,7 +91,7 @@ export function HousekeepingExtras() {
           <p className="m-0 flex-1 text-[14.5px] font-medium">Hidden from inbox</p>
           <span className="text-[13px] text-fg-3 tabular-nums">{list.length}</span>
         </div>
-        {hidden && list.length === 0 && <p className="m-0 px-[22px] text-[13px] text-fg-3">Nothing hidden. Hide PRs from the inbox with E, or the Hide button on a row.</p>}
+        {hidden && list.length === 0 && <p className="m-0 px-[22px] text-[13px] text-fg-3">Nothing hidden. Hide PRs from the inbox with E, or the eye icon on a row.</p>}
         {shown.map((h) => (
           <div key={h.key} className="flex items-center gap-2.5 px-[22px] py-1.5">
             <span className="min-w-0 flex-1 truncate text-[13px]">
