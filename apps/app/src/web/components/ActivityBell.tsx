@@ -8,7 +8,7 @@ import type { AppNotification, NotificationSettings } from "../../shared/types";
 import { Icon } from "@pr-bunny/icons";
 import { navigate } from "../api";
 import { bell, browserName, notifySettings, openNotification, useFeed, usePermission } from "../notifications";
-import { BUNNY_FACES } from "./Bunny";
+import { BUNNY_FACES, flashBunny } from "./Bunny";
 import { RAIL_GAP, useRailPopover } from "./RailTip";
 import { Sym } from "./ui";
 
@@ -54,8 +54,6 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   /** Opened by a click (stays open) rather than by hovering (closes when the pointer leaves). */
   const [pinned, setPinned] = useState(false);
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
-  /** The badge count when the bell was opened ("3 new"). */
-  const [fresh, setFresh] = useState(0);
   const wrap = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -78,12 +76,11 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   const allOff = settings ? Object.values(settings.events).every((v) => !v) : false;
   const items = feed?.items ?? [];
   const setOpen = (on: boolean) => (on ? rail.show() : rail.hide());
-  // Unpin whenever it closes, including when another rail popover takes over.
+  // Unpin whenever it closes, including when another rail popover takes over. Opening the panel
+  // doesn't clear the badge: an item counts until you open it, or Mark all read.
   useEffect(() => {
     if (!open) return setPinned(false);
-    setFresh(unseen);
     notifySettings(true).then(setSettings);
-    if (unseen) bell.seen();
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = () => {
     if (open && pinned) return setOpen(false);
@@ -93,6 +90,12 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
   // Same timing as the Inbox card: open at once, linger briefly so the pointer can cross the gap.
   const hoverIn = () => rail.show();
   const hoverOut = () => !pinned && rail.hide(180);
+  // Done with the list: close it, and the bunny says so.
+  const markAllRead = () => {
+    bell.readAll();
+    setOpen(false);
+    flashBunny({ mood: "allRead" });
+  };
   const goSettings = () => {
     setOpen(false);
     navigate("/settings#notifications");
@@ -113,10 +116,10 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
     <div role="dialog" aria-label="Activity" className="flex max-h-[min(560px,calc(100vh-100px))] w-[372px] max-w-[calc(100vw-24px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-pop">
       <div className="flex flex-none items-center gap-2 pt-3 pr-2 pb-2.5 pl-4">
         <span className="text-[14px] font-semibold">Activity</span>
-        {fresh > 0 && showList && <span className="text-[12.5px] text-fg-3">{fresh} new</span>}
+        {unseen > 0 && showList && <span className="text-[12.5px] text-fg-3">{unseen} new</span>}
         <span className="flex-1" />
         {showList && items.some((i) => !i.read) && (
-          <button onClick={() => bell.readAll()} className="h-[30px] cursor-pointer rounded-[7px] border-0 bg-transparent px-2 text-[12.5px] text-fg-2 hover:bg-hover">
+          <button onClick={markAllRead} className="h-[30px] cursor-pointer rounded-[7px] border-0 bg-transparent px-2 text-[12.5px] text-fg-2 hover:bg-hover">
             Mark all read
           </button>
         )}
@@ -239,7 +242,8 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
         onClick={toggle}
         aria-label={unseen ? `Activity, ${unseen} new` : "Activity"}
         aria-expanded={open}
-        className={`flex h-14 w-[60px] cursor-pointer flex-col items-center justify-center gap-[3px] rounded-[10px] border-0 hover:text-fg ${open ? "bg-accent-soft text-accent" : "bg-transparent text-fg-2"}`}
+        // Looks like the other rail items while hovering opens the panel; pink only once pinned.
+        className={`flex h-14 w-[60px] cursor-pointer flex-col items-center justify-center gap-[3px] rounded-[10px] border-0 hover:text-fg ${open && pinned ? "bg-accent-soft text-accent" : "bg-transparent text-fg-2"}`}
       >
         {icon}
         <span className="text-[11px] font-medium">Activity</span>
