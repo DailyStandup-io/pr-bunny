@@ -1,7 +1,6 @@
 // Clearing the inbox: hide a PR "until it changes" or "for good" (one row or a selection), the
 // Hidden tab to bring them back, and the empty inbox. Hiding is local state only: GitHub isn't told.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import type { HiddenItem } from "../../shared/types";
 import { api } from "../api";
 import { BUNNY_FACES } from "./Bunny";
@@ -138,91 +137,26 @@ export function RowCheck({ on, visible, onToggle }: { on: boolean; visible: bool
 }
 
 /** Hide (until it changes), with a split arrow for "for good". */
-export function HideButton({ onHide, className = "" }: { onHide: (mode: HideMode) => void; className?: string }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLSpanElement>(null);
-  const menu = useRef<HTMLSpanElement>(null);
-  // The menu is portalled to <body> at fixed coordinates, so rounded lists with overflow-hidden
-  // can't clip it. It opens below the button, or above when there's no room.
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
-  useLayoutEffect(() => {
-    if (!open) return setPos(null);
-    const place = () => {
-      const b = box.current?.getBoundingClientRect();
-      if (!b) return;
-      const h = menu.current?.offsetHeight ?? 120;
-      const below = b.bottom + 4 + h <= window.innerHeight - 8;
-      setPos({ top: below ? b.bottom + 4 : Math.max(8, b.top - 4 - h), right: Math.max(8, window.innerWidth - b.right) });
-    };
-    place();
-    requestAnimationFrame(place);
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open]);
-  useEffect(() => {
-    if (!open) return;
-    const inside = (t: EventTarget | null) => [box.current, menu.current].some((el) => el?.contains(t as Node));
-    const click = (e: MouseEvent) => !inside(e.target) && setOpen(false);
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    window.addEventListener("mousedown", click);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("mousedown", click);
-      window.removeEventListener("keydown", key);
-    };
-  }, [open]);
-  const item = (mode: HideMode, icon: string, label: string, sub: string, k: string) => (
-    <button
-      role="menuitem"
-      onClick={() => {
-        setOpen(false);
-        onHide(mode);
-      }}
-      className="flex cursor-pointer items-start gap-2.5 rounded-lg border-0 bg-transparent px-2.5 py-2 text-left hover:bg-hover"
-    >
-      <Sym name={icon} size={18} className="mt-px text-fg-3" />
-      <span className="flex flex-1 flex-col">
-        <span className="text-[13px] font-medium text-fg">{label}</span>
-        <span className="text-[12px] text-fg-3">{sub}</span>
-      </span>
-      <span className="font-mono text-[11px] text-fg-3">{k}</span>
-    </button>
-  );
+/**
+ * The row's hide control: an eye icon left of the row's action, with a tooltip. Click hides until
+ * the PR changes; ⇧-click hides for good (as do E and ⇧E on the focused row).
+ */
+export function HideIcon({ onHide, className = "" }: { onHide: (mode: HideMode) => void; className?: string }) {
   return (
-    <span ref={box} className={`relative flex flex-none items-center ${className}`}>
+    <span className={`group/hide relative flex flex-none ${className}`}>
       <button
-        onClick={() => onHide("change")}
-        title="Hide until it changes · E"
-        className="inline-flex h-[30px] cursor-pointer items-center gap-[5px] rounded-l-[7px] border border-line-strong bg-surface px-[9px] text-[12.5px] font-medium text-fg hover:bg-hover"
+        onClick={(e) => onHide(e.shiftKey ? "good" : "change")}
+        aria-label="Hide until it changes. Shift-click to hide for good"
+        className="grid size-[34px] cursor-pointer place-items-center rounded-lg border-0 bg-transparent text-fg-3 hover:bg-sunken hover:text-fg"
       >
-        <Sym name="visibility_off" size={16} className="text-fg-3" />
-        Hide
+        <Sym name="visibility_off" size={18} />
       </button>
-      <button
-        onClick={() => setOpen(!open)}
-        aria-label="More hide options"
-        aria-expanded={open}
-        className="-ml-px grid h-[30px] w-[26px] cursor-pointer place-items-center rounded-r-[7px] border border-line-strong bg-surface text-fg-3 hover:bg-hover"
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute top-1/2 right-[calc(100%+6px)] z-40 -translate-y-1/2 rounded-md bg-fg px-2 py-1 text-[12px] font-medium whitespace-nowrap text-surface opacity-0 transition-opacity delay-300 group-hover/hide:opacity-100 group-focus-within/hide:opacity-100"
       >
-        <Sym name="expand_more" size={16} />
-      </button>
-      {open &&
-        createPortal(
-          <span
-            ref={menu}
-            role="menu"
-            style={pos ? { top: pos.top, right: pos.right } : { top: 0, right: 0, visibility: "hidden" }}
-            className="fixed z-50 flex w-[280px] flex-col gap-0.5 rounded-xl border border-line bg-surface p-1.5 shadow-pop"
-          >
-            {item("change", "visibility_off", "Hide until it changes", "Back on new commits or comments", "E")}
-            {item("good", "do_not_disturb_on", "Hide for good", "Only back if you restore it", "⇧E")}
-          </span>,
-          document.body,
-        )}
+        Hide <span className="opacity-60">· E</span>
+      </span>
     </span>
   );
 }
