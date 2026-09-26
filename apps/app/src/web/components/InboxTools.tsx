@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { HiddenItem } from "../../shared/types";
 import { api } from "../api";
+import { changedSince, setHiddenItems as setItems, useHiddenItems } from "../hidden";
 import { BUNNY_FACES } from "./Bunny";
 import { BunnyFace, type ToastSpec } from "./Tidy";
 import { Sym, timeAgo } from "./ui";
@@ -17,27 +18,15 @@ export interface Hideable {
   meta: string;
 }
 
-const ms = (t: string) => Date.parse(t.includes("T") ? t : `${t.replace(" ", "T")}Z`);
-
-/** Has the row changed since it was hidden "until it changes"? */
-export const changedSince = (item: HiddenItem, stamp?: string) => item.mode === "change" && Boolean(stamp && item.stamp && ms(stamp) > ms(item.stamp));
+export { changedSince };
 
 /**
  * The hidden list, with hide/restore that update at once and toast with Undo. Items hidden "until
  * it changes" whose row has moved on are dropped (see `sweep`).
  */
 export function useHidden(toast: (t: ToastSpec | null) => void) {
-  const [items, setItems] = useState<HiddenItem[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    api.hidden().then(
-      (h) => {
-        setItems(h);
-        setLoaded(true);
-      },
-      () => setLoaded(true),
-    );
-  }, []);
+  // Shared with the rail's Inbox card and Settings, so hiding here hides everywhere.
+  const { items, loaded } = useHiddenItems();
   const byKey = new Map(items.map((i) => [i.key, i]));
 
   const isHidden = (row: Hideable) => {
