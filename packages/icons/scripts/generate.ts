@@ -28,6 +28,8 @@ if (import.meta.main) {
     analytics: ["ChartNoAxesCombinedIcon", null],
     moon: ["Moon02Icon", null],
     sun: ["Sun03Icon", null],
+    bell: ["Notification01Icon", null],
+    bellOff: ["NotificationOff01Icon", null],
   };
 
   const freeNames = [...new Set(Object.values(ICONS).map(([f]) => f))];

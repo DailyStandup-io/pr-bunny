@@ -205,6 +205,83 @@ export async function prForBranch(repo: string, branch: string): Promise<number 
   return prs[0]?.number ?? null;
 }
 
+// ---------- notification polling (read-only) ----------
+
+/** Open PRs assigned to you. */
+export async function assignedPrs(): Promise<InboxPr[]> {
+  const raw = await ghJson<any[]>([
+    "search", "prs", "--assignee=@me", "--state=open", "--limit", "50",
+    "--json", `${INBOX_FIELDS},repository`,
+  ]);
+  return raw.map((p) => toInboxPr(p, p.repository.nameWithOwner));
+}
+
+export interface MyPrReview {
+  /** GitHub's node id, unique per review. */
+  id: string;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
+  comments: number;
+  submittedAt: string;
+}
+
+/** Recent reviews on your open PRs (not your own), in one GraphQL round trip. */
+export async function myPrReviews(): Promise<MyPrReview[]> {
+  const query = `query { viewer { login pullRequests(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
+    number title url repository { nameWithOwner }
+    reviews(last: 10) { nodes { id state submittedAt author { login } comments { totalCount } } } } } } }`;
+  const res = await $`gh api graphql -f ${`query=${query}`}`.quiet().nothrow();
+  if (res.exitCode !== 0) throw new Error(`gh api graphql failed: ${res.stderr.toString().trim()}`);
+  const viewerData = JSON.parse(res.stdout.toString()).data?.viewer;
+  const me = String(viewerData?.login ?? "").toLowerCase();
+  const out: MyPrReview[] = [];
+  for (const pr of viewerData?.pullRequests?.nodes ?? []) {
+    for (const r of pr?.reviews?.nodes ?? []) {
+      const author = r?.author?.login;
+      if (!author || author.toLowerCase() === me || r.state === "PENDING" || !r.submittedAt) continue;
+      out.push({
+        id: r.id,
+        repo: pr.repository.nameWithOwner,
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        author,
+        state: r.state,
+        comments: r.comments?.totalCount ?? 0,
+        submittedAt: r.submittedAt,
+      });
+    }
+  }
+  return out;
+}
+
+/** Head commit and state of many PRs in one GraphQL round trip. Keyed `owner/name#number`. */
+export async function prHeads(prs: Array<{ repo: string; number: number }>): Promise<Record<string, { sha: string; state: string; title: string }>> {
+  const valid = prs.filter((p) => p.repo.split("/").length === 2 && p.repo.split("/").every((x) => SAFE_NAME.test(x))).slice(0, 60);
+  if (!valid.length) return {};
+  const fields = valid
+    .map((p, i) => {
+      const [owner, name] = p.repo.split("/");
+      return `p${i}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${Math.trunc(p.number)}) { headRefOid state title } }`;
+    })
+    .join("\n");
+  const res = await $`gh api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
+  let data: Record<string, any> = {};
+  try {
+    data = JSON.parse(res.stdout.toString()).data ?? {};
+  } catch {}
+  const out: Record<string, { sha: string; state: string; title: string }> = {};
+  valid.forEach((p, i) => {
+    const pr = data[`p${i}`]?.pullRequest;
+    if (pr?.headRefOid) out[`${p.repo}#${p.number}`] = { sha: pr.headRefOid, state: pr.state, title: pr.title };
+  });
+  return out;
+}
+
 // ---------- status + writes (only ever called from an explicit user action) ----------
 
 let viewerLogin: string | null = null;

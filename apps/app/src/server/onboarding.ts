@@ -12,7 +12,7 @@ import { DATA_DIR } from "./config";
 import { db } from "./db/db";
 import { checkoutInfo, headBranch, scanCheckouts, SEARCH_ROOTS } from "./local";
 import { checkSkillPath, defaultRef, listFiles, locationLabels } from "./skills";
-import { applySettings, getSettings, updateSettings } from "./settings";
+import { applySettings, getSettings, NOTIFY_KINDS, updateSettings } from "./settings";
 
 const tildify = (p: string) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
 const untildify = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
@@ -160,7 +160,14 @@ export async function completeSetup(input: SetupInput): Promise<SetupState> {
   }
 
   // Validate models/effort before changing anything, so a bad value leaves everything as it was.
-  const settingsPatch = { provider, ...(input.models ? { models: input.models } : {}), ...(input.effort ? { effort: input.effort } : {}) } as Parameters<typeof updateSettings>[0];
+  // The notifications step is optional: left out (skipped), the current notification settings stay.
+  const notifications = input.notifications ? { desktop: Boolean(input.notifications.desktop), events: input.notifications.events ?? {} } : undefined;
+  const settingsPatch = {
+    provider,
+    ...(input.models ? { models: input.models } : {}),
+    ...(input.effort ? { effort: input.effort } : {}),
+    ...(notifications ? { notifications } : {}),
+  } as Parameters<typeof updateSettings>[0];
   applySettings(getSettings(), settingsPatch);
 
   const cli = input.installCli ? linkCli({ replace: Boolean(input.replaceCli) }) : unlinkCli();
@@ -173,6 +180,7 @@ export async function completeSetup(input: SetupInput): Promise<SetupState> {
     gh: { path: checks.gh.path, user: checks.gh.user },
     cli: { installed: cli.linked, path: cli.path },
     repos: repos.map((r) => ({ ...r, path: tildify(r.path) })),
+    notifications: notifications ? { desktop: settings.notifications.desktop, events: NOTIFY_KINDS.filter((k) => settings.notifications.events[k]) } : null,
     onboardedAt: completedAt,
   };
 

@@ -1,5 +1,5 @@
 // User-editable settings, persisted in SQLite. Env vars (config.ts) supply the defaults.
-import type { Effort, ModelOption, Provider, ProviderOptions, Settings, Stage } from "../shared/types";
+import type { Effort, ModelOption, NotificationSettings, NotifyKind, Provider, ProviderOptions, Settings, Stage } from "../shared/types";
 import { MODELS, WORKTREE_TTL_HOURS } from "./config";
 import { db } from "./db/db";
 
@@ -67,7 +67,33 @@ export const DEFAULTS: Settings = {
   stackConcurrency: 1,
   stackMaxAll: 8,
   stackIncludeDone: false,
+  notifications: {
+    desktop: true,
+    events: {
+      req: true,
+      assign: true,
+      stackUpd: false,
+      myReview: true,
+      overview: false,
+      deep: true,
+      failed: true,
+      changed: false,
+      all: true,
+      across: true,
+      update: true,
+    },
+    repoMode: "all",
+    repos: [],
+    quiet: false,
+    quietFrom: "19:00",
+    quietTo: "09:00",
+    quietWeekend: true,
+    quietWhileFocused: true,
+    bundle: true,
+  },
 };
+
+export const NOTIFY_KINDS = Object.keys(DEFAULTS.notifications.events) as NotifyKind[];
 
 let cache: Settings | null = null;
 
@@ -81,6 +107,11 @@ export function getSettings(): Settings {
     ...stored,
     models: { ...DEFAULTS.models, ...stored.models },
     effort: { ...DEFAULTS.effort, ...stored.effort },
+    notifications: {
+      ...DEFAULTS.notifications,
+      ...stored.notifications,
+      events: { ...DEFAULTS.notifications.events, ...stored.notifications?.events },
+    },
   };
   return cache;
 }
@@ -132,6 +163,36 @@ export function applySettings(base: Settings, patch: Partial<Settings>): Setting
   if (patch.stackConcurrency !== undefined) next.stackConcurrency = int(patch.stackConcurrency, "PRs at once", 1, 3);
   if (patch.stackMaxAll !== undefined) next.stackMaxAll = int(patch.stackMaxAll, "Review all limit", 2, 30);
   if (patch.stackIncludeDone !== undefined) next.stackIncludeDone = Boolean(patch.stackIncludeDone);
+  if (patch.notifications !== undefined) next.notifications = applyNotifications(next.notifications, patch.notifications);
+  return next;
+}
+
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+
+function applyNotifications(base: NotificationSettings, patch: Partial<NotificationSettings>): NotificationSettings {
+  if (typeof patch !== "object" || patch === null) throw new Error("Invalid notification settings");
+  const next = structuredClone(base);
+  for (const k of ["desktop", "quiet", "quietWeekend", "quietWhileFocused", "bundle"] as const) if (patch[k] !== undefined) next[k] = Boolean(patch[k]);
+  if (patch.events !== undefined) {
+    for (const [k, v] of Object.entries(patch.events ?? {})) {
+      if (!NOTIFY_KINDS.includes(k as NotifyKind)) throw new Error(`Unknown notification event: ${k}`);
+      next.events[k as NotifyKind] = Boolean(v);
+    }
+  }
+  if (patch.repoMode !== undefined) {
+    if (patch.repoMode !== "all" && patch.repoMode !== "chosen") throw new Error("Notify from must be all or chosen repos");
+    next.repoMode = patch.repoMode;
+  }
+  if (patch.repos !== undefined) {
+    if (!Array.isArray(patch.repos) || patch.repos.length > 200 || !patch.repos.every((r) => typeof r === "string" && REPO.test(r))) throw new Error("Repos must be owner/name");
+    next.repos = [...new Set(patch.repos)];
+  }
+  for (const k of ["quietFrom", "quietTo"] as const) {
+    if (patch[k] === undefined) continue;
+    if (typeof patch[k] !== "string" || !TIME.test(patch[k])) throw new Error("Quiet hours must be times like 19:00");
+    next[k] = patch[k];
+  }
   return next;
 }
 
