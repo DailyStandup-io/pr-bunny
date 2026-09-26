@@ -58,6 +58,8 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
     .map((p: InboxEntry) => {
       const at = p.requestedAt ?? p.updatedAt;
       const old = Date.now() - parse(at) > DAY;
+      // Its stack is running Review all, so the stack owns this PR's review: go there, don't start another.
+      const owned = p.stack?.running && p.stack.stackId != null ? { ...p.stack, stackId: p.stack.stackId } : null;
       return {
         key: p.url,
         kind: p.isDraft ? "Draft" : undefined,
@@ -68,10 +70,10 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
         reasonColor: old ? "var(--warn)" : undefined,
         repo: p.repo,
         meta: `${short(p.repo)}#${p.number}`,
-        action: "Start review",
+        action: owned ? `Reviewing in stack · ${owned.pos} of ${owned.size}` : "Start review",
         at,
-        go: () => run(p.url, async () => (await api.start(p.url, p.repo)).id),
-        stack: p.stack ? { repo: p.repo, pr: p.number, ...p.stack } : undefined,
+        go: owned ? () => navigate(`/stack/${owned.stackId}`) : () => run(p.url, async () => (await api.start(p.url, p.repo)).id),
+        stack: p.stack && !owned ? { repo: p.repo, pr: p.number, ...p.stack } : undefined,
       };
     });
 

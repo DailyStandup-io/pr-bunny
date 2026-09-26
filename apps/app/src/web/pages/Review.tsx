@@ -186,6 +186,22 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex h-[60vh] items-center justify-center">{children}</div>;
 }
 
+/** This review is a layer of a stack running Review all: the stack owns the run. */
+function StackOwner({ review }: { review: ReviewDetail }) {
+  const st = review.runningStack;
+  if (!st) return null;
+  return (
+    <button
+      onClick={() => navigate(`/stack/${st.id}`)}
+      title={`${st.title}: this review is part of the stack's Review all`}
+      className="inline-flex cursor-pointer items-center gap-[5px] rounded-full border-0 bg-accent-soft px-2.5 py-0.5 text-[12px] font-medium text-accent hover:bg-accent-soft-2"
+    >
+      <Sym name="stacks" size={14} />
+      Reviewing in stack{st.pos ? ` · ${st.pos} of ${st.size}` : ""}
+    </button>
+  );
+}
+
 function Header({ review }: { review: ReviewDetail }) {
   const chips = (
     <span className="inline-flex items-center gap-1.5 font-mono text-[12px]">
@@ -223,6 +239,7 @@ function Header({ review }: { review: ReviewDetail }) {
             ) : (
               <span className="text-fg-3">No PR yet</span>
             )}
+            <StackOwner review={review} />
           </div>
           <h1 className="m-0 text-[clamp(20px,2.2vw,25px)] leading-[1.3] font-semibold tracking-[-0.01em] text-pretty">{review.title}</h1>
         </div>
@@ -254,6 +271,7 @@ function Header({ review }: { review: ReviewDetail }) {
               Re-review · see previous
             </button>
           )}
+          <StackOwner review={review} />
         </div>
         <h1 className="m-0 text-[clamp(20px,2.2vw,25px)] leading-[1.3] font-semibold tracking-[-0.01em] text-pretty">{review.title}</h1>
       </div>

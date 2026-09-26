@@ -7,10 +7,10 @@ import { getSettings } from "./settings";
 import { db } from "./db/db";
 import { releaseWorktree } from "./cleanup";
 import { ensureWorktree, readOnlyTools, startDeepReview } from "./deep";
-import { approvePr, postReview, prDiff, prStatus, prView, viewer, type ReviewPayload } from "./gh";
+import { approvePr, postReview, prDiff, prStatus, prView, viewer, type PrRef, type ReviewPayload } from "./gh";
 import { emit } from "./live";
 import { PR_QA_SCHEMA, prQaPrompt, QA_SCHEMA, qaPrompt, type PrQaOutput, type QaOutput } from "./prompts/qa";
-import { getReview, getRow, insertReview, refOf, saveStack, setPhase, trackedRun } from "./reviews";
+import { activeReviewFor, adoptIntoStacks, getReview, getRow, insertReview, refOf, saveStack, setPhase, startOnce, trackedRun, type ReviewRow } from "./reviews";
 
 interface FindingRow {
   id: number;
@@ -310,14 +310,27 @@ export async function approve(reviewId: number, body?: string) {
 
 // ---------- re-review ----------
 
-/** New review of the PR's latest commit that knows about this one's findings. */
+/**
+ * New review of the PR's latest commit that knows about this one's findings. Shares startReview's
+ * one-start-per-PR guard: a review of the PR that's already running is returned instead, and the
+ * result becomes the PR's stack layer review.
+ */
 export async function startRereview(reviewId: number): Promise<number> {
   const prev = getRow(reviewId);
   if (!prev) throw new Error("Review not found");
   const ref = refOf(prev);
+  return startOnce(ref, async () => adoptIntoStacks(ref, await startRereviewNow(prev, ref)));
+}
+
+async function startRereviewNow(prev: ReviewRow, ref: PrRef): Promise<number> {
+  const running = activeReviewFor(ref);
+  if (running) return running;
   const pr = await prView(ref);
   if (pr.headRefOid === prev.head_sha) throw new Error("No new commits since this review.");
 
+  // Re-check after the network call, right before inserting.
+  const runningNow = activeReviewFor(ref);
+  if (runningNow) return runningNow;
   const id = insertReview(ref, pr, "read", prev.id);
   const diff = await prDiff(ref);
   db.run("UPDATE reviews SET recon_json = ?, diff_text = ?, read_at = datetime('now') WHERE id = ?", [prev.recon_json, diff, id]);

@@ -201,6 +201,8 @@ export interface ReviewDetail extends ReviewSummary {
   dirtyFiles: number;
   /** Self-review: "What reviewers will ask". */
   reviewerQuestions: ReviewerQuestion[];
+  /** Set when this review is a layer of a stack that's running Review all (the stack owns the run). */
+  runningStack: { id: number; title: string; pos: number; size: number } | null;
 }
 
 export interface PrCheck {
@@ -670,4 +672,8 @@ export interface StackSubmissionLayer {
 export interface StackBadge {
   pos: number;
   size: number;
+  /** The saved stack this PR is a layer of (null until the stack's been opened). */
+  stackId: number | null;
+  /** That stack is running Review all, so it owns this PR's review. */
+  running: boolean;
 }
