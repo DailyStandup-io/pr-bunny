@@ -98,6 +98,8 @@ export interface ReviewSummary {
   postedComments: number;
   runNumber: number;
   openedPrNumber: number | null;
+  /** Self-review: the PR's state when it was last fetched (JSON of PrSnapshot), or null. */
+  prSnap: string | null;
   /** 1 when the overview finished (SQLite boolean): a stopped deep review keeps it. */
   hasOverview: number;
   /** Latest thing that happened: started, a decision, or posting. */
@@ -215,6 +217,67 @@ export interface PrCheck {
   url: string | null;
 }
 
+/** A self-review's pull request on GitHub, as the Ready check shows it (src/server/prstate.ts). */
+export type MergeMethod = "merge" | "squash" | "rebase";
+export interface SelfPrCheck {
+  name: string;
+  state: "pass" | "fail" | "running";
+  url: string | null;
+  /** "3m 12s", when GitHub says when it started and finished. */
+  took: string | null;
+}
+export type SelfPrReviewState = "requested" | "commented" | "approved" | "changes";
+export interface SelfPr {
+  number: number;
+  url: string;
+  title: string;
+  author: string;
+  /** The signed-in GitHub user. */
+  viewer: string;
+  state: "open" | "merged" | "closed";
+  draft: boolean;
+  decision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  /** MERGEABLE | CONFLICTING | UNKNOWN (GitHub is still working it out). */
+  mergeable: string;
+  mergeStateStatus: string;
+  /** Why branch protection blocks the merge ("Needs an approving review"), or null. */
+  protection: string | null;
+  checks: SelfPrCheck[];
+  /** People on the PR: requested, or with their latest review. Not you. */
+  reviews: Array<{ h: string; st: SelfPrReviewState }>;
+  base: string;
+  head: string;
+  headSha: string;
+  commits: number;
+  createdAt: string;
+  /** Commits on GitHub since the last run: 0 none, n, or -1 (changed, count unknown). */
+  newCommits: number;
+  crossRepo: boolean;
+  mergedBy: string | null;
+  mergedAt: string | null;
+  mergeCommit: string | null;
+  /** After merging: whether the head branch is gone from GitHub (null when unknown). */
+  branchDeleted: boolean | null;
+  closedAt: string | null;
+  /** Merge methods the repo allows, in GitHub's order. */
+  methods: MergeMethod[];
+  fetchedAt: string;
+}
+
+/** What the review lists show for a self-review's PR, saved whenever the PR is fetched. */
+export interface PrSnapshot {
+  number: number;
+  state: "open" | "merged" | "closed";
+  /** "in review", "approved", "changes requested", "draft", "merged", "closed". */
+  status: string;
+  checksLine: string;
+  failing: number;
+  base: string;
+  mergedAt: string | null;
+  /** Indicator for the list pill: [icon, colour, tooltip]. */
+  ind: [string, string, string];
+}
+
 export interface PrStatus {
   state: string; // OPEN | CLOSED | MERGED
   isDraft: boolean;
@@ -294,6 +357,7 @@ export interface SelfReviewState {
   findingsUndecided: number;
   findingsOpen: number;
   openedPrNumber: number | null;
+  prSnap: string | null;
 }
 
 export interface SelfBranch {

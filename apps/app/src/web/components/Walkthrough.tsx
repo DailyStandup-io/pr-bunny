@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { Finding, ReviewDetail, Severity, SnippetLine } from "../../shared/types";
+import type { Finding, ReviewDetail, SelfPr, Severity, SnippetLine } from "../../shared/types";
+import { pillOf, snapshotOf } from "../../shared/pr";
 import { api, readPos, readPrompt, savePos, savePrompt, useAgentLabel, useCopy, useLayout } from "../api";
 import { Markdown } from "./Markdown";
 import type { ProgressLine } from "./ProgressFeed";
@@ -23,13 +24,19 @@ export const SELF_REASONS = ["Intentional", "Follow-up PR", "False positive", "W
 
 const location = (f: Finding) => `${f.path}${f.line ? `:${f.startLine ? `${f.startLine}-` : ""}${f.line}` : ""}`;
 
+/** Where the findings bar sticks: just under the review's tab bar (53px) with a 7px gap. */
+const BAR_TOP = 60;
+
 export function Walkthrough({
   review,
+  pr,
   qaLines,
   onChanged,
   onGoSubmit,
 }: {
   review: ReviewDetail;
+  /** A self-review's PR on GitHub: the bar's pill follows it ("In review · #9"). */
+  pr?: SelfPr | null;
   qaLines: ProgressLine[];
   onChanged: () => void;
   onGoSubmit: () => void;
@@ -52,6 +59,77 @@ export function Walkthrough({
     });
   const [copied, copy] = useCopy();
   const [showSummary, setShowSummary] = useState(false);
+  // The bar sticks under the tabs. While it's stuck an open summary folds away, and comes back
+  // when you scroll to the top again (unless you toggled it yourself in between).
+  const autoCollapsed = useRef(false);
+  const showRef = useRef(showSummary);
+  showRef.current = showSummary;
+  const toggleSummary = () => {
+    autoCollapsed.current = false;
+    setShowSummary(!showSummary);
+  };
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !window.IntersectionObserver) return;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        const stuck = !e!.isIntersecting && e!.boundingClientRect.top < BAR_TOP + 1;
+        if (stuck && showRef.current) {
+          autoCollapsed.current = true;
+          setShowSummary(false);
+        } else if (!stuck && autoCollapsed.current) {
+          autoCollapsed.current = false;
+          setShowSummary(true);
+        }
+      },
+      { rootMargin: `-${BAR_TOP + 1}px 0px 0px 0px`, threshold: 0 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  // When the bar's row runs out of room, the summary button drops its label (icon only).
+  const barRef = useRef<HTMLElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  const need = useRef(0);
+  const [barH, setBarH] = useState(62);
+  useEffect(() => {
+    const row = rowRef.current;
+    const bar = barRef.current;
+    if (!row || !bar || !window.ResizeObserver) return;
+    const fit = () => {
+      const w = row.clientWidth;
+      setCompact((was) => {
+        if (!was) {
+          const c = row.querySelector<HTMLElement>("[data-counts]");
+          const deficit = Math.max(row.scrollWidth - w, c ? c.scrollWidth - c.clientWidth : 0);
+          if (deficit > 1) {
+            need.current = w + deficit;
+            return true;
+          }
+          return false;
+        }
+        return !(need.current && w >= need.current);
+      });
+      setBarH(bar.offsetHeight);
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(row);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+  // The finding in view after Accept / Dismiss: scroll up to it if its top went under the bar.
+  const panelRef = useRef<HTMLElement>(null);
+  const scrollToPanel = () => {
+    const el = panelRef.current;
+    if (!el) return;
+    const offset = (barRef.current ? barRef.current.getBoundingClientRect().bottom : BAR_TOP) + 12;
+    const top = window.scrollY + el.getBoundingClientRect().top - offset;
+    if (Math.abs(top - window.scrollY) < 4 || top > window.scrollY) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: Math.max(0, top), behavior: reduce ? "auto" : "smooth" });
+  };
   const f = findings[Math.min(index, findings.length - 1)];
 
   const [comment, setComment] = useState(f?.comment ?? "");
@@ -108,6 +186,7 @@ export function Walkthrough({
       await saveComment();
       await api.decide(f.id, "accepted");
       nextUndecided();
+      requestAnimationFrame(scrollToPanel);
     });
   const dismiss = (why: string) =>
     f &&
@@ -116,6 +195,7 @@ export function Walkthrough({
       setDismissing(false);
       setReason("");
       nextUndecided();
+      requestAnimationFrame(scrollToPanel);
     });
   const undo = () => f?.decision && act(() => api.decide(f.id, null));
   const startDismiss = () => {
@@ -169,38 +249,56 @@ export function Walkthrough({
   const wtCols = wide ? "260px minmax(0,1fr) 360px" : mid ? "250px minmax(0,1fr)" : "minmax(0,1fr)";
   const wtAreas = wide ? '"list main chat"' : mid ? '"list main" "list chat"' : '"list" "main" "chat"';
 
+  const prPill = self && pr ? pillOf(snapshotOf(pr)) : null;
+  const summaryLabel = showSummary ? "Hide summary" : "Summary & coverage";
+  const chatTop = BAR_TOP + barH + 12;
+
   return (
     <div className="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-4 px-[clamp(16px,3vw,32px)] pt-5 pb-6">
-      <section className={`${card} py-3 pr-4 pl-[18px]`}>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-          {self ? (
-            <span className={`inline-flex h-7 items-center rounded-full px-3 text-[13px] font-semibold ${selfReady ? "bg-add-soft text-add" : "bg-warn-soft text-warn"}`}>
+      {/* 1px marker just above the bar; the -17px cancels the column gap so it adds no space. */}
+      <div ref={sentinelRef} aria-hidden className="-mb-[17px] h-px" />
+      <section
+        ref={barRef}
+        className={`${card} sticky z-14 py-3 pr-4 pl-[18px]`}
+        // The first shadow paints the page background in the gap above, so content scrolling
+        // under the tabs doesn't show between them and the bar.
+        style={{ top: BAR_TOP, boxShadow: "0 -13px 0 var(--bg), 0 6px 16px oklch(0.2 0.02 80 / 0.08)" }}
+      >
+        <div ref={rowRef} className="flex min-w-0 flex-nowrap items-center gap-x-4 gap-y-2.5">
+          {prPill ? (
+            <span className="inline-flex h-7 flex-none items-center rounded-full px-3 text-[13px] font-semibold whitespace-nowrap" style={{ background: prPill.bg, color: prPill.color }}>
+              {prPill.status}
+            </span>
+          ) : self ? (
+            <span className={`inline-flex h-7 flex-none items-center rounded-full px-3 text-[13px] font-semibold whitespace-nowrap ${selfReady ? "bg-add-soft text-add" : "bg-warn-soft text-warn"}`}>
               {selfReady ? "Ready to open" : "Fix before opening"}
             </span>
           ) : (
             review.verdict && (
-              <span className={`inline-flex h-7 items-center rounded-full px-3 text-[13px] font-semibold ${VERDICT[review.verdict].cls}`}>
+              <span className={`inline-flex h-7 flex-none items-center rounded-full px-3 text-[13px] font-semibold whitespace-nowrap ${VERDICT[review.verdict].cls}`}>
                 {agent}: {VERDICT[review.verdict].text}
               </span>
             )
           )}
-          <span className="text-[13.5px] text-fg-2">
+          <span data-counts className="min-w-0 flex-[0_1_auto] truncate text-[13.5px] text-fg-2">
             {self
               ? `${findings.length} findings · ${resolved} resolved · ${toFix} to fix · ${wont} won’t fix`
               : `${findings.length} findings · ${decided} decided · ${accepted} to post`}
           </span>
-          <div className="ml-auto flex flex-wrap gap-2">
+          <div className="ml-auto flex flex-none gap-2">
             {(review.reviewSummary || review.coverage || review.priorStatus.length > 0) && (
               <button
-                onClick={() => setShowSummary(!showSummary)}
-                className="inline-flex h-9 cursor-pointer items-center gap-1 rounded-lg border border-line bg-transparent px-3 text-[13px] text-fg-2 hover:bg-hover hover:text-fg"
+                onClick={toggleSummary}
+                aria-label={summaryLabel}
+                title={summaryLabel}
+                className={`inline-flex h-9 min-w-9 cursor-pointer items-center justify-center gap-1 rounded-lg border border-line bg-transparent text-[13px] text-fg-2 hover:bg-hover hover:text-fg ${compact ? "px-0" : "px-3"}`}
               >
-                {showSummary ? "Hide summary" : "Summary & coverage"}
+                {!compact && summaryLabel}
                 <Sym name={showSummary ? "expand_less" : "expand_more"} />
               </button>
             )}
             {allDone && !locked && (
-              <button onClick={onGoSubmit} className="h-9 cursor-pointer rounded-lg border-0 bg-accent px-3.5 text-[13px] font-semibold text-on-accent">
+              <button onClick={onGoSubmit} className="h-9 cursor-pointer rounded-lg border-0 bg-accent px-3.5 text-[13px] font-semibold whitespace-nowrap text-on-accent">
                 {self ? "All decided, ready check →" : "All decided, submit →"}
               </button>
             )}
@@ -256,7 +354,8 @@ export function Walkthrough({
         </section>
       ) : (
         <div className="grid items-start gap-4" style={{ gridTemplateColumns: wtCols, gridTemplateAreas: wtAreas }}>
-          <aside className={`${card} top-[68px] min-w-0 overflow-hidden [grid-area:list]`} style={{ position: narrow ? "static" : "sticky" }}>
+          {/* Scrolls with the page: the findings bar is what stays put. */}
+          <aside className={`${card} min-w-0 overflow-hidden [grid-area:list]`}>
             <div className="border-b border-line px-4 pt-3.5 pb-3">
               <div className="flex items-baseline justify-between">
                 <span className="text-[14px] font-semibold">Findings</span>
@@ -310,7 +409,7 @@ export function Walkthrough({
             )}
           </aside>
 
-          <article className="flex min-w-0 flex-col gap-4 [grid-area:main]">
+          <article ref={panelRef} className="flex min-w-0 scroll-mt-[140px] flex-col gap-4 [grid-area:main]">
             <div className={`${card} overflow-hidden`}>
               <header className="flex flex-col gap-2.5 px-[22px] pt-[18px] pb-4">
                 <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
@@ -487,8 +586,9 @@ export function Walkthrough({
           </article>
 
           <section
-            className={`${card} top-[68px] flex min-w-0 flex-col overflow-hidden [grid-area:chat]`}
-            style={{ position: wide ? "sticky" : "static", maxHeight: wide ? "calc(100vh - 176px)" : "none" }}
+            className={`${card} flex min-w-0 flex-col overflow-hidden [grid-area:chat]`}
+            // Sticks just under the findings bar (its height changes with the summary).
+            style={{ position: wide ? "sticky" : "static", top: chatTop, maxHeight: wide ? `calc(100vh - ${chatTop + 16}px)` : "none" }}
           >
             <header className="border-b border-line px-[18px] pt-3.5 pb-3">
               <div className="text-[14px] font-semibold">Ask {agent}</div>

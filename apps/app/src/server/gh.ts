@@ -58,7 +58,7 @@ export function parsePrRef(input: string, defaultRepo?: string): PrRef {
   throw new Error(`Couldn't understand "${s}". Use a PR URL, owner/repo#123, or a number.`);
 }
 
-async function ghJson<T>(args: string[]): Promise<T> {
+export async function ghJson<T>(args: string[]): Promise<T> {
   const res = await $`gh ${args}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${res.stderr.toString().trim()}`);
   return JSON.parse(res.stdout.toString()) as T;

@@ -89,6 +89,9 @@ export interface ReviewRow {
   dirty_files: number;
   run_number: number;
   opened_pr_number: number | null;
+  pr_snap_json: string | null;
+  started_at: string;
+  branch_sha: string | null;
 }
 
 export function getRow(id: number): ReviewRow | null {
@@ -103,7 +106,7 @@ const SUMMARY_SQL = `
   SELECT v.id, r.owner || '/' || r.name AS repo, v.pr_number AS prNumber, v.title, v.author, v.url, v.phase,
          v.additions, v.deletions, v.changed_files AS changedFiles, v.started_at AS startedAt, v.submitted_at AS submittedAt,
          v.mode, v.head_ref AS headRef, v.read_at AS readAt, v.error, v.posted_event AS postedEvent, v.run_number AS runNumber,
-         v.opened_pr_number AS openedPrNumber, (v.recon_json IS NOT NULL) AS hasOverview,
+         v.opened_pr_number AS openedPrNumber, v.pr_snap_json AS prSnap, (v.recon_json IS NOT NULL) AS hasOverview,
          (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL) AS findingsTotal,
          (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision IS NOT NULL) AS findingsDecided,
          (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision = 'accepted') AS findingsAccepted,

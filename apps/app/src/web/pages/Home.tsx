@@ -4,6 +4,7 @@ import { api, navigate, savePos, useAsync } from "../api";
 import { Page } from "../components/Page";
 import { Spinner, Sym, timeAgo } from "../components/ui";
 import { nextStep, openReviews, shortRef } from "../reviewState";
+import { parseSnapshot } from "../../shared/pr";
 import { ReviewStackButton } from "../components/StackRail";
 import { HiddenList, HideIcon, InboxEmpty, InboxTabs, RowCheck, SelectionBar, useHidden, type HideMode } from "../components/InboxTools";
 import { KeyHints, useToast } from "../components/Tidy";
@@ -343,11 +344,15 @@ function yourWork(
 ): Row[] {
   if (!s) return [];
   const rows: Row[] = [];
-  type Next = { reason: string; action: string; tab: ReturnType<typeof nextStep>["tab"] | null };
+  type Next = { reason: string; reasonColor?: string; action: string; tab: ReturnType<typeof nextStep>["tab"] | null };
   const next = (review: SelfSources["branches"][number]["review"], fallback: string): Next | null => {
     if (!review) return { reason: fallback, action: "Check", tab: null };
     if (review.phase === "failed") return { reason: "The last self-review failed.", action: "Open", tab: "overview" };
     if (review.phase !== "walkthrough") return { reason: "Self-review in progress.", action: "Open", tab: "overview" };
+    const snap = parseSnapshot(review.prSnap);
+    if (snap && snap.state !== "open") return null;
+    if (snap)
+      return { reason: `PR #${snap.number} is open · ${snap.status}. ${snap.checksLine}.`, reasonColor: snap.failing ? "var(--del)" : undefined, action: "Open", tab: "submit" };
     if (review.openedPrNumber && review.findingsOpen === 0) return null;
     if (review.findingsOpen === 0) return { reason: "All findings closed. Ready to open the PR.", action: "Open PR", tab: "submit" };
     return {
@@ -369,6 +374,7 @@ function yourWork(
       kind,
       title: b.title,
       reason: r.reason,
+      reasonColor: r.reasonColor,
       meta: `${b.pr ? `#${b.pr.number} · ` : ""}${b.name} · ${timeAgo(b.updatedAt)}${b.current && b.dirtyFiles ? ` · ${b.dirtyFiles} uncommitted` : ""}`,
       action: r.action,
       at: b.updatedAt,
@@ -388,6 +394,7 @@ function yourWork(
       kind: p.isDraft ? "Draft" : "PR",
       title: p.title,
       reason: r.reason,
+      reasonColor: r.reasonColor,
       meta: `#${p.number} · ${p.headRefName} · ${timeAgo(p.updatedAt)}`,
       action: r.action,
       at: p.updatedAt,

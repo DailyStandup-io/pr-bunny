@@ -36,12 +36,17 @@ import { getInbox, repoPrs, searchPrs } from "./inbox";
 import { feed, markAllRead, markSeen, NOTIFY_TOPIC, openNotification, startNotifier } from "./notify";
 import { SERVICE_WORKER } from "./sw";
 import { ACTIVITY, attachServer, getBacklog, topic } from "./live";
+import { collaborators, markReady, mergePr, selfPr, watchSelfPrs } from "./prstate";
+import type { MergeMethod } from "../shared/types";
 import { activeRuns, continueRecon, getReview, getRow, lastStoppedRun, listReviews, markRead, recoverInterrupted, retryRecon, startReview } from "./reviews";
 
 recoverInterrupted();
 scheduleUpdateChecks();
 startStackRunner();
 startNotifier();
+// Self-reviews' PRs: keep "In review" / "Done · merged" current in the lists (read-only).
+setTimeout(() => void watchSelfPrs().catch(() => {}), 30_000).unref?.();
+setInterval(() => void watchSelfPrs().catch(() => {}), 3 * 60_000).unref?.();
 
 // Remove posted/abandoned PR checkouts now and hourly (see cleanup.ts for the rules).
 const runCleanup = () => {
@@ -284,6 +289,25 @@ const server = Bun.serve<{ reviewId: number }>({
         const { reviewers } = await body<{ reviewers?: string[] }>(req);
         return openPrFor(Number(req.params.id), Array.isArray(reviewers) ? reviewers : []);
       }),
+    },
+    // The self-review's PR on GitHub (found for the branch), for Ready check. Read-only.
+    "/api/reviews/:id/pr": {
+      GET: api(async (req: R<"/api/reviews/:id/pr">) => ({ pr: await selfPr(Number(req.params.id)) })),
+    },
+    "/api/reviews/:id/collaborators": {
+      GET: api((req: R<"/api/reviews/:id/collaborators">) => collaborators(Number(req.params.id))),
+    },
+    // GitHub writes: only from the confirmed "Merge pull request" and the "Mark ready for review" clicks.
+    "/api/reviews/:id/merge": {
+      POST: api(async (req: R<"/api/reviews/:id/merge">) => {
+        const input = await body<{ method?: MergeMethod; deleteBranch?: boolean; headSha?: string }>(req);
+        if (input.method !== "merge" && input.method !== "squash" && input.method !== "rebase") throw new Error("Pick a merge method.");
+        if (typeof input.headSha !== "string" || !/^[0-9a-f]{40}$/.test(input.headSha)) throw new Error("Missing the commit to merge. Reload and try again.");
+        return mergePr(Number(req.params.id), { method: input.method, deleteBranch: input.deleteBranch === true, headSha: input.headSha });
+      }),
+    },
+    "/api/reviews/:id/ready": {
+      POST: api((req: R<"/api/reviews/:id/ready">) => markReady(Number(req.params.id))),
     },
 
     "/api/settings": {

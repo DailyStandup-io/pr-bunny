@@ -4,7 +4,8 @@ import { api, elapsed, navigate, savePos, useAsync, useNow } from "../api";
 import { Page } from "../components/Page";
 import { PrSearch } from "../components/PrSearch";
 import { field, Link, plain, Spinner, Sym, timeAgo } from "../components/ui";
-import { latestPerPr, nextStep, openReviews, outcome, shortRef } from "../reviewState";
+import { latestPerPr, nextStep, openReviews, outcome, selfFinished, shortRef } from "../reviewState";
+import { parseSnapshot, pillOf } from "../../shared/pr";
 import { BUNNY_FACES } from "../components/Bunny";
 import { BunnyFace, ConfirmPop, CONFIRM_AFTER_MS, GreySpinner, useToast } from "../components/Tidy";
 
@@ -32,7 +33,7 @@ export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; r
   });
   const dayAgo = Date.now() - 86_400_000;
   const finished = all.filter((r) =>
-    r.mode === "self" ? r.openedPrNumber != null && parse(r.updatedAt) > dayAgo : r.submittedAt != null && parse(r.submittedAt) > dayAgo,
+    r.mode === "self" ? selfFinished(r) && parse(r.updatedAt) > dayAgo : r.submittedAt != null && parse(r.submittedAt) > dayAgo,
   );
 
   // ---------- remove / clear (local only; Undo brings them back) ----------
@@ -40,7 +41,7 @@ export function ReviewHome({ inbox, repo, onRepo, runs }: { inbox: AsyncInbox; r
   const [askClear, setAskClear] = useState(false);
   // Posted, failed and stopped. Anything with findings still to decide stays.
   const clearable = latestPerPr(all).filter(
-    (r) => !runs.some((x) => x.reviewId === r.id) && (r.phase === "submitted" || r.phase === "failed" || r.phase === "cancelled" || (r.mode === "self" && r.openedPrNumber != null)),
+    (r) => !runs.some((x) => x.reviewId === r.id) && (r.phase === "submitted" || r.phase === "failed" || r.phase === "cancelled" || (r.mode === "self" && selfFinished(r))),
   );
   const remove = async (ids: number[], msg: string) => {
     try {
@@ -406,6 +407,11 @@ function YourBranches({ repo, sources }: { repo: string; sources: { data?: SelfS
     if (!review) return { text: "Not reviewed", cls: "bg-sunken text-fg-3" };
     if (review.phase === "failed") return { text: "Failed", cls: "bg-del-soft text-del" };
     if (review.phase !== "walkthrough") return { text: "Reviewing", cls: "bg-accent-soft text-accent" };
+    const snap = parseSnapshot(review.prSnap);
+    if (snap) {
+      const p = pillOf(snap);
+      return { text: p.status, cls: "", style: { background: p.bg, color: p.color }, ind: p.ind };
+    }
     if (review.openedPrNumber) return { text: `Opened #${review.openedPrNumber}`, cls: "bg-add-soft text-add" };
     if (review.findingsOpen === 0) return { text: "Ready", cls: "bg-add-soft text-add" };
     return { text: `Run ${review.runNumber} · ${review.findingsOpen} open`, cls: "bg-warn-soft text-warn" };
@@ -474,7 +480,17 @@ function YourBranches({ repo, sources }: { repo: string; sources: { data?: SelfS
                       {y.ref} · {y.meta}
                     </span>
                   </span>
-                  <span className={`flex-none rounded-full px-2.5 py-[3px] text-[12.5px] font-medium ${p.cls}`}>{p.text}</span>
+                  <span
+                    className={`inline-flex flex-none items-center gap-[5px] rounded-full px-2.5 py-[3px] text-[12.5px] font-medium ${p.cls}`}
+                    style={"style" in p ? p.style : undefined}
+                  >
+                    {p.text}
+                    {"ind" in p && p.ind && (
+                      <span title={p.ind[2]} className="flex" style={{ color: p.ind[1] }}>
+                        <Sym name={p.ind[0]} size={14} fill />
+                      </span>
+                    )}
+                  </span>
                   {starting === y.key ? <Spinner size={18} /> : <Sym name="arrow_forward" size={20} className="text-fg-3" />}
                 </button>
               </li>

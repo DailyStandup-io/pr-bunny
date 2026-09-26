@@ -22,7 +22,9 @@ export const BUNNY_FACES = {
 };
 const F = BUNNY_FACES;
 
-export type Mood = "idle" | "working" | "issues" | "fixed" | "clean" | "rejected" | "approved" | "commented" | "update" | "caughtUp" | "error" | "stopped";
+export type Mood =
+  | "idle" | "working" | "issues" | "fixed" | "clean" | "rejected" | "approved" | "commented" | "update" | "caughtUp" | "error" | "stopped"
+  | "prChecks" | "prReview" | "prBlocked" | "prMerge" | "shipIt" | "prClosed";
 
 const MOODS: Record<Mood, { face: string | null; say: string }> = {
   idle: { face: F.smile, say: "Hi! Pick a PR and I'll take a look." },
@@ -38,6 +40,13 @@ const MOODS: Record<Mood, { face: string | null; say: string }> = {
   error: { face: F.crying, say: "Couldn't reach your coding agent. Check Settings." },
   // Neutral, not sad: you chose to stop it.
   stopped: { face: F.wink, say: "Stopped. Resume whenever you like." },
+  // A self-review's PR on GitHub (Ready check); pages pass the PR number in `say`.
+  prChecks: { face: F.wobbly, say: "Checks are running…" },
+  prReview: { face: F.smile, say: "It's in review." },
+  prBlocked: { face: F.wink, say: "It can’t merge yet." },
+  prMerge: { face: F.surprised, say: "Good to merge." },
+  shipIt: { face: F.shades, say: "Merged. Nice one." },
+  prClosed: { face: F.smile, say: "It was closed without merging." },
 };
 
 /** What a page wants the bunny to show. `go` runs when the bunny is clicked (a path, or a callback). */

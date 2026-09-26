@@ -105,9 +105,9 @@ export async function startSelfReview(input: StartSelf): Promise<{ id: number; r
     // Title: the only commit's subject, else the branch name.
     const title = commits.length === 1 ? commits[0]!.replace(/^\w+ /, "") : name;
     db.run(
-      `UPDATE reviews SET title = ?, head_sha = ?, merge_base = ?, worktree_path = ?, files_json = ?, dirty_files = ?,
+      `UPDATE reviews SET title = ?, head_sha = ?, branch_sha = ?, merge_base = ?, worktree_path = ?, files_json = ?, dirty_files = ?,
               additions = ?, deletions = ?, changed_files = ? WHERE id = ?`,
-      [title, snap.headSha, snap.mergeBase, snap.path, JSON.stringify(files), snap.dirtyFiles,
+      [title, snap.headSha, snap.branchSha, snap.mergeBase, snap.path, JSON.stringify(files), snap.dirtyFiles,
        files.reduce((n, f) => n + f.additions, 0), files.reduce((n, f) => n + f.deletions, 0), files.length, id],
     );
     const row = getRow(id)!;

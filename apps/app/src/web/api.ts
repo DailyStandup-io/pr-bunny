@@ -8,6 +8,8 @@ import type {
   LiveEvent,
   ModelOption,
   PrStatus,
+  MergeMethod,
+  SelfPr,
   AgentInfo,
   Provider,
   ProviderOptions,
@@ -126,6 +128,10 @@ export const api = {
   rerun: (id: number) => post<ReviewDetail>(`/api/reviews/${id}/rerun`),
   reviewers: (id: number) => request<SuggestedReviewer[]>(`/api/reviews/${id}/reviewers`),
   openPr: (id: number, reviewers: string[]) => post<{ number: number; url: string; created: boolean }>(`/api/reviews/${id}/open-pr`, { reviewers }),
+  selfPr: (id: number) => request<{ pr: SelfPr | null }>(`/api/reviews/${id}/pr`).then((r) => r.pr),
+  collaborators: (id: number) => request<Array<{ h: string; sub: string; team: boolean }>>(`/api/reviews/${id}/collaborators`),
+  mergePr: (id: number, input: { method: MergeMethod; deleteBranch: boolean; headSha: string }) => post<SelfPr>(`/api/reviews/${id}/merge`, input),
+  markReady: (id: number) => post<SelfPr>(`/api/reviews/${id}/ready`, {}),
 };
 
 /** Loads async data and re-runs when deps change. `reload` re-fetches without flashing empty. */
