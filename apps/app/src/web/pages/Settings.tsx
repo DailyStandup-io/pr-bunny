@@ -4,6 +4,7 @@ import { api, navigate, refreshAgentLabel, updates, useAsync, useLayout, useThem
 import { Page } from "../components/Page";
 import { card, field, MaskIcon, Spinner, Sym, timeAgo } from "../components/ui";
 import { BUNNY_FACES } from "../components/Bunny";
+import { HousekeepingExtras } from "../components/Housekeeping";
 import claudeLogo from "../assets/claude.svg";
 // OpenAI's official Blossom (cdn.openai.com/brand), drawn in the text colour so it works in both themes.
 import openaiLogo from "../assets/openai.svg";
@@ -230,6 +231,8 @@ export function SettingsPage() {
           <Row label="Clean up checkouts after" hint="PR checkouts are deleted after this long with no activity, and right after you post. Asking a question later recreates one.">
             <NumberInput value={draft.worktreeTtlHours} onChange={(n) => set({ worktreeTtlHours: n })} suffix="hours" />
           </Row>
+          {/* Clearing finished reviews and the hidden list: saved on change, separate from the save bar. */}
+          <HousekeepingExtras />
         </section>
 
         <Appearance />

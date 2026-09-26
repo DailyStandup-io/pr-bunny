@@ -7,7 +7,8 @@ import { CODENAME, VERSION } from "../build-info";
 import { cleanupWorktrees } from "./cleanup";
 import { detectAgents } from "./agents";
 import { getSettings, MODEL_OPTIONS, PROVIDERS, resetSettings, updateSettings } from "./settings";
-import { cancelDeepReview, continueDeepReview, isReviewRunning, rerunSelfReview, startDeepReview } from "./deep";
+import { continueDeepReview, isReviewRunning, rerunSelfReview, startDeepReview } from "./deep";
+import { autoClearReviews, clearReviews, getHousekeeping, hideItems, listHidden, restartReview, restoreReviews, resumeReview, saveHousekeeping, stopReview, unhideItems } from "./tidy";
 import { selfSources } from "./local";
 import { checkoutFor, completeSetup, pickFolder, resolveRepo, setupChecks, setupLinkCli, setupRepos, setupState } from "./onboarding";
 import { checkForUpdate, installUpdate, restartForUpdate, scheduleUpdateChecks, updateState } from "./update";
@@ -27,6 +28,7 @@ import {
   stackSubmission,
   startLayer,
   startStackRunner,
+  stopStack,
 } from "./stacks";
 import { previewSkill, repoSkills, searchFiles } from "./skills";
 import { findSelfReview, openPrFor, startSelfReview, suggestReviewers, type StartSelf } from "./self";
@@ -39,7 +41,16 @@ scheduleUpdateChecks();
 startStackRunner();
 
 // Remove posted/abandoned PR checkouts now and hourly (see cleanup.ts for the rules).
-const runCleanup = () => cleanupWorktrees({ isRunning: isReviewRunning }).catch((e) => console.warn("cleanup failed:", e));
+const runCleanup = () => {
+  cleanupWorktrees({ isRunning: isReviewRunning }).catch((e) => console.warn("cleanup failed:", e));
+  // Settings › Housekeeping › Clear finished reviews (off by default).
+  try {
+    const n = autoClearReviews();
+    if (n) console.log(`cleanup: cleared ${n} finished review(s)`);
+  } catch (e) {
+    console.warn("auto-clear failed:", e);
+  }
+};
 runCleanup();
 setInterval(runCleanup, 60 * 60 * 1000);
 
@@ -344,8 +355,50 @@ const server = Bun.serve<{ reviewId: number }>({
       }),
     },
 
+    // ---------- stop and tidy up (local only: nothing here writes to GitHub) ----------
+    // Stop the running overview or deep review. `force` settles it now instead of waiting for the agent to exit.
     "/api/reviews/:id/cancel": {
-      POST: api((req: R<"/api/reviews/:id/cancel">) => cancelDeepReview(Number(req.params.id))),
+      POST: api(async (req: R<"/api/reviews/:id/cancel">) => stopReview(Number(req.params.id), { force: Boolean((await body<{ force?: boolean }>(req)).force) })),
+    },
+    // A stopped review: Resume continues the agent session where it stopped; Start again reruns the step.
+    "/api/reviews/:id/resume": {
+      POST: api(async (req: R<"/api/reviews/:id/resume">) => {
+        const out = await resumeReview(Number(req.params.id));
+        return { ...out, review: await reviewOr404(Number(req.params.id)) };
+      }),
+    },
+    "/api/reviews/:id/restart": {
+      POST: api(async (req: R<"/api/reviews/:id/restart">) => {
+        await restartReview(Number(req.params.id));
+        return reviewOr404(Number(req.params.id));
+      }),
+    },
+    // Remove reviews from the lists (running ones are stopped first); restore = Undo.
+    "/api/reviews/clear": {
+      POST: api(async (req) => clearReviews((await body<{ ids?: number[] }>(req)).ids ?? [])),
+    },
+    "/api/reviews/restore": {
+      POST: api(async (req) => restoreReviews((await body<{ ids?: number[] }>(req)).ids ?? [])),
+    },
+    // PRs hidden from the inbox ("until it changes" / "for good").
+    "/api/hidden": {
+      GET: api(() => listHidden()),
+      POST: api(async (req) => hideItems((await body<{ items?: Parameters<typeof hideItems>[0] }>(req)).items ?? [])),
+    },
+    "/api/hidden/restore": {
+      POST: api(async (req) => unhideItems((await body<{ keys?: string[] }>(req)).keys ?? [])),
+    },
+    "/api/housekeeping": {
+      GET: api(() => getHousekeeping()),
+      POST: api(async (req) => saveHousekeeping(await body(req))),
+    },
+    // Stop Review all. `keepFinished: false` also removes the layers' unposted reviews.
+    "/api/stacks/:id/stop": {
+      POST: api(async (req: R<"/api/stacks/:id/stop">) => {
+        const { keepFinished } = await body<{ keepFinished?: boolean }>(req);
+        const out = await stopStack(Number(req.params.id), keepFinished !== false);
+        return { ...out, stack: await getStack(Number(req.params.id)) };
+      }),
     },
 
     "/api/reviews/:id/rereview": {

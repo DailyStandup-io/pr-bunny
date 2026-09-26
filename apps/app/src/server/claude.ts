@@ -57,6 +57,30 @@ export function subscriptionEnv(): Record<string, string> {
   return env;
 }
 
+/** How long a stopped agent gets to exit after SIGTERM before it's killed outright. */
+export const KILL_GRACE_MS = 5_000;
+
+/**
+ * Stops `proc` when `signal` aborts: SIGTERM first, then SIGKILL if it's still running after
+ * KILL_GRACE_MS. Returns a cleanup to call once the process has exited.
+ */
+export function killOnAbort(proc: { kill: (sig?: number | NodeJS.Signals) => void; exitCode: number | null; signalCode?: string | null }, signal?: AbortSignal): () => void {
+  if (!signal) return () => {};
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const onAbort = () => {
+    proc.kill("SIGTERM");
+    timer = setTimeout(() => {
+      if (proc.exitCode === null && !proc.signalCode) proc.kill("SIGKILL");
+    }, KILL_GRACE_MS);
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  return () => {
+    signal.removeEventListener("abort", onAbort);
+    if (timer) clearTimeout(timer);
+  };
+}
+
 export function buildArgs(o: ClaudeOptions): string[] {
   const args = [
     "-p",
@@ -84,6 +108,16 @@ export async function runClaude<T = unknown>(o: ClaudeOptions): Promise<ClaudeRe
   const logPath = join(LOG_DIR, `${o.logName}.jsonl`);
   const log = Bun.file(logPath).writer();
 
+  const result: ClaudeResult<T> = {
+    sessionId: null, structured: null, text: "", isError: false, error: null, hitTurnLimit: false,
+    costUsd: null, durationMs: null, inputTokens: null, outputTokens: null, denials: [], logPath,
+  };
+  // Stopped before it started (e.g. while the checkout was being prepared): don't spawn at all.
+  if (o.signal?.aborted) {
+    await log.end();
+    return { ...result, isError: true, error: "Cancelled" };
+  }
+
   const proc = Bun.spawn(["claude", ...buildArgs(o)], {
     cwd: o.cwd,
     env: subscriptionEnv(),
@@ -91,13 +125,7 @@ export async function runClaude<T = unknown>(o: ClaudeOptions): Promise<ClaudeRe
     stdout: "pipe",
     stderr: "pipe",
   });
-  const onAbort = () => proc.kill();
-  o.signal?.addEventListener("abort", onAbort, { once: true });
-
-  const result: ClaudeResult<T> = {
-    sessionId: null, structured: null, text: "", isError: false, error: null, hitTurnLimit: false,
-    costUsd: null, durationMs: null, inputTokens: null, outputTokens: null, denials: [], logPath,
-  };
+  const stopKilling = killOnAbort(proc, o.signal);
   let sawResult = false;
 
   const handle = (line: string) => {
@@ -137,7 +165,7 @@ export async function runClaude<T = unknown>(o: ClaudeOptions): Promise<ClaudeRe
   handle(buf);
 
   const exitCode = await proc.exited;
-  o.signal?.removeEventListener("abort", onAbort);
+  stopKilling();
   const stderr = (await new Response(proc.stderr).text()).trim();
   await log.end();
 

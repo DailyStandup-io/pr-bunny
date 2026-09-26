@@ -26,6 +26,7 @@ import { listOpenPrs, parsePrRef, prDiff, prView, viewer, type PrRef } from "./g
 import { emit, recentProgress } from "./live";
 import { RECON_SCHEMA, RECON_SELF_SCHEMA, RECON_SELF_SYSTEM, RECON_SYSTEM, reconPrompt } from "./prompts/recon";
 import { findStack } from "./stack";
+import { claimRun, releaseRun } from "./runs";
 
 // ---------- persistence ----------
 
@@ -102,7 +103,7 @@ const SUMMARY_SQL = `
   SELECT v.id, r.owner || '/' || r.name AS repo, v.pr_number AS prNumber, v.title, v.author, v.url, v.phase,
          v.additions, v.deletions, v.changed_files AS changedFiles, v.started_at AS startedAt, v.submitted_at AS submittedAt,
          v.mode, v.head_ref AS headRef, v.read_at AS readAt, v.error, v.posted_event AS postedEvent, v.run_number AS runNumber,
-         v.opened_pr_number AS openedPrNumber,
+         v.opened_pr_number AS openedPrNumber, (v.recon_json IS NOT NULL) AS hasOverview,
          (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL) AS findingsTotal,
          (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision IS NOT NULL) AS findingsDecided,
          (SELECT COUNT(*) FROM findings f WHERE f.review_id = v.id AND f.superseded_by IS NULL AND f.decision = 'accepted') AS findingsAccepted,
@@ -113,7 +114,8 @@ const SUMMARY_SQL = `
   FROM reviews v JOIN repos r ON r.id = v.repo_id`;
 
 export function listReviews(limit = 200): ReviewSummary[] {
-  return db.query(`${SUMMARY_SQL} ORDER BY v.id DESC LIMIT ?`).all(limit) as ReviewSummary[];
+  // Cleared reviews (Remove, Clear all finished) are left out; Undo brings them back.
+  return db.query(`${SUMMARY_SQL} WHERE v.cleared_at IS NULL ORDER BY v.id DESC LIMIT ?`).all(limit) as ReviewSummary[];
 }
 
 /** Scans and deep reviews running now. The run's start time comes from its claude_runs row. */
@@ -138,7 +140,7 @@ export function latestReviewFor(repo: string, number: number): { id: number; pha
   return db
     .query(
       `SELECT v.id, v.phase, v.head_sha AS headSha FROM reviews v JOIN repos r ON r.id = v.repo_id
-       WHERE r.owner = ? AND r.name = ? AND v.pr_number = ? AND v.mode = 'peer' ORDER BY v.id DESC LIMIT 1`,
+       WHERE r.owner = ? AND r.name = ? AND v.pr_number = ? AND v.mode = 'peer' AND v.cleared_at IS NULL ORDER BY v.id DESC LIMIT 1`,
     )
     .get(owner!, name!, number) as { id: number; phase: Phase; headSha: string } | null;
 }
@@ -468,6 +470,21 @@ export async function saveStack(id: number, ref: PrRef, pr: Awaited<ReturnType<t
  * branch passes `local` (the snapshot's diff), and has no stack.
  */
 export async function runRecon(id: number, ref: PrRef, pr: Awaited<ReturnType<typeof prView>>, local?: { diff: string }) {
+  // Stopped while its checkout was still being prepared (self-reviews of a local branch).
+  if (getRow(id)?.phase === "cancelled") return;
+  // Stop aborts this run (and kills the agent); a stopped overview keeps nothing.
+  const ctrl = claimRun(id, "recon");
+  try {
+    await reconSteps(id, ref, pr, local, ctrl.signal);
+  } catch (e) {
+    if (!ctrl.signal.aborted) throw e;
+    setPhase(id, "cancelled");
+  } finally {
+    releaseRun(id, ctrl);
+  }
+}
+
+async function reconSteps(id: number, ref: PrRef, pr: Awaited<ReturnType<typeof prView>>, local: { diff: string } | undefined, signal: AbortSignal) {
   const progress = (text: string) => emit({ type: "progress", reviewId: id, runKind: "recon", text, at: Date.now() });
   const self = getRow(id)?.mode === "self";
 
@@ -505,9 +522,11 @@ export async function runRecon(id: number, ref: PrRef, pr: Awaited<ReturnType<ty
         maxTurns: reconMaxTurns,
         logName,
         onProgress,
+        signal,
       }),
     { maxTurns: reconMaxTurns },
   );
+  if (signal.aborted) throw new Error("Cancelled");
   saveRecon(id, pr.files, res, diffTruncated, reconMaxTurns);
 }
 
@@ -546,6 +565,7 @@ export async function continueRecon(id: number, sessionId: string, turns: number
   setPhase(id, "recon_running");
   const files: PrFile[] = row.files_json ? JSON.parse(row.files_json) : [];
   const diffTruncated = (row.diff_text?.length ?? 0) > RECON_DIFF_CHAR_LIMIT;
+  const ctrl = claimRun(id, "recon");
   (async () => {
     const res = await trackedRun<ReconOutput>(
       id,
@@ -564,11 +584,15 @@ export async function continueRecon(id: number, sessionId: string, turns: number
           maxTurns: turns,
           logName,
           onProgress,
+          signal: ctrl.signal,
         }),
       { maxTurns: turns },
     );
+    if (ctrl.signal.aborted) throw new Error("Cancelled");
     saveRecon(id, files, res, diffTruncated, turns);
-  })().catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
+  })()
+    .catch((e) => (ctrl.signal.aborted ? setPhase(id, "cancelled") : setPhase(id, "failed", e instanceof Error ? e.message : String(e))))
+    .finally(() => releaseRun(id, ctrl));
 }
 
 /** Sent when resuming a run that hit its turn cap. */

@@ -23,11 +23,11 @@ import {
   type SelfReviewOutput,
 } from "./prompts/review";
 import type { ClaudeResult } from "./claude";
+import { claimRun, hasRun, releaseRun } from "./runs";
 import { CONTINUE_PROMPT, getRow, isLocalSelf, refOf, saveStack, setPhase, trackedRun, turnLimitMessage, type ReviewRow } from "./reviews";
 
 const REVIEW_DIFF_CHAR_LIMIT = 150_000;
 const DELTA_CHAR_LIMIT = 80_000;
-const running = new Map<number, AbortController>();
 
 /** Read-only toolset scoped to one checkout. `dontAsk` denies anything not listed here. */
 export function readOnlyTools(worktree: string) {
@@ -68,12 +68,9 @@ export async function ensureWorktree(row: ReviewRow): Promise<string> {
   return wt.path;
 }
 
+/** An overview or deep review is running for this review in this process. */
 export function isReviewRunning(id: number) {
-  return running.has(id);
-}
-
-export function cancelDeepReview(id: number) {
-  running.get(id)?.abort();
+  return hasRun(id);
 }
 
 /** Starts the deep review in the background. No-op if one is already running for this review. */
@@ -81,8 +78,11 @@ export function startDeepReview(id: number) {
   inBackground(id, (row, signal) => runDeepReview(row, signal));
 }
 
-/** Resumes a deep review that ran out of turns, in the same Claude session, with `turns` more. */
-export function continueDeepReview(id: number, sessionId: string, turns: number) {
+/**
+ * Resumes a deep review in the same agent session with `turns` more: after it ran out of turns,
+ * or after you stopped it (`prompt` then says so).
+ */
+export function continueDeepReview(id: number, sessionId: string, turns: number, prompt: string = CONTINUE_PROMPT) {
   inBackground(id, async (row, signal) => {
     const wt = await ensureWorktree(row);
     const settings = getSettings();
@@ -94,7 +94,7 @@ export function continueDeepReview(id: number, sessionId: string, turns: number)
       settings.models.review,
       (logName, onProgress) =>
         runAgent({
-          prompt: CONTINUE_PROMPT,
+          prompt,
           resume: sessionId,
           cwd: wt,
           model: settings.models.review,
@@ -114,16 +114,23 @@ export function continueDeepReview(id: number, sessionId: string, turns: number)
   });
 }
 
-function inBackground(id: number, work: (row: ReviewRow, signal: AbortSignal) => Promise<void>) {
-  if (running.has(id)) return;
+/**
+ * Runs `work` with a Stop-able signal. A stopped run lands on `stoppedPhase`: "cancelled" (the
+ * overview is kept; Resume or Start again), or back to "walkthrough" for a self-review re-run,
+ * whose earlier findings are untouched.
+ */
+function inBackground(id: number, work: (row: ReviewRow, signal: AbortSignal) => Promise<void>, stoppedPhase: "cancelled" | "walkthrough" = "cancelled") {
+  if (hasRun(id)) return;
   const row = getRow(id);
   if (!row) throw new Error("Not found");
-  const ctrl = new AbortController();
-  running.set(id, ctrl);
+  const ctrl = claimRun(id, "review");
   setPhase(id, "reviewing");
   work(row, ctrl.signal)
-    .catch((e) => setPhase(id, "failed", ctrl.signal.aborted ? "Deep review cancelled." : e instanceof Error ? e.message : String(e)))
-    .finally(() => running.delete(id));
+    .catch((e) => {
+      if (ctrl.signal.aborted) setPhase(id, stoppedPhase);
+      else setPhase(id, "failed", e instanceof Error ? e.message : String(e));
+    })
+    .finally(() => releaseRun(id, ctrl));
 }
 
 async function finishReview(
@@ -359,7 +366,7 @@ export function rerunSelfReview(id: number) {
     })();
     await insertFindings(id, res.diffText, out.findings, wt.path, { append: true });
     setPhase(id, "walkthrough");
-  });
+  }, "walkthrough");
 }
 
 async function saveFindings(id: number, diffText: string, out: ReviewOutput, sessionId: string | null, parent: ReviewRow | null, worktree: string) {

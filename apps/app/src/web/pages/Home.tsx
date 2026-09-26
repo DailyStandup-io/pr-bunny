@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ActiveRun, Inbox, InboxEntry, SelfSources } from "../../shared/types";
 import { api, navigate, savePos, useAsync } from "../api";
 import { Page } from "../components/Page";
 import { Spinner, Sym, timeAgo } from "../components/ui";
 import { nextStep, openReviews, shortRef } from "../reviewState";
 import { ReviewStackButton } from "../components/StackRail";
+import { HiddenList, HideButton, InboxEmpty, InboxTabs, RowCheck, SelectionBar, useHidden, type HideMode } from "../components/InboxTools";
+import { KeyHints, useToast } from "../components/Tidy";
 
 type AsyncInbox = { data?: Inbox; error?: string; loading: boolean };
 
@@ -24,6 +26,11 @@ interface Row {
   go: () => void;
   /** Part of a stack of open PRs: badge + "Review stack". */
   stack?: { repo: string; pr: number; pos: number; size: number };
+  /** Hiding: `pr:owner/name#n`, `review:<id>` or `branch:owner/name:<branch>`, and when it last changed. */
+  hideKey: string;
+  stamp?: string;
+  /** Set for a review you left open: ⌫ removes the review (with Undo) instead of hiding. */
+  reviewId?: number;
 }
 
 const short = (repo: string) => repo.split("/")[1] ?? repo;
@@ -62,6 +69,8 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
       const owned = p.stack?.running && p.stack.stackId != null ? { ...p.stack, stackId: p.stack.stackId } : null;
       return {
         key: p.url,
+        hideKey: `pr:${p.repo}#${p.number}`,
+        stamp: p.updatedAt,
         kind: p.isDraft ? "Draft" : undefined,
         title: p.title,
         reason: p.requestedBy ? "Review requested by " : "Review requested ",
@@ -86,6 +95,9 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
       const s = nextStep(r);
       return {
         key: `review:${r.id}`,
+        hideKey: `review:${r.id}`,
+        stamp: r.updatedAt,
+        reviewId: r.id,
         title: r.title,
         reason: s.reason,
         reasonColor: r.phase === "failed" ? "var(--del)" : undefined,
@@ -98,6 +110,18 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
     });
 
   const mine = yourWork(sources.data ?? null, (key, fn) => run(key, fn), open);
+
+  // ---------- hide, select, remove (local only: nothing changes on GitHub) ----------
+  const [toast, showToast] = useToast();
+  const hidden = useHidden(showToast);
+  const [tab, setTab] = useState<"inbox" | "hidden">("inbox");
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [focus, setFocus] = useState<string | null>(null);
+  const everyRow = [...requested, ...left, ...mine];
+  // Rows hidden "until it changes" that have changed come back (and are forgotten).
+  useEffect(() => {
+    if (hidden.loaded) hidden.sweep(everyRow);
+  }, [hidden.loaded, hidden.items.length, everyRow.map((r) => `${r.hideKey}@${r.stamp}`).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const groups = [
     { label: "Review requested", sub: "Not started yet", rows: requested, note: null as string | null },
     {
@@ -107,10 +131,72 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
       note: running.length ? `${shortRef(running[0]!)} is still running. It moves here when findings are ready.` : null,
     },
     { label: "Your work to check", sub: "Branches and drafts of yours", rows: mine, note: null },
-  ].filter((g) => g.rows.length || g.note);
+  ]
+    .map((g) => ({ ...g, rows: g.rows.filter((r) => !hidden.isHidden(r)) }))
+    .filter((g) => g.rows.length || g.note);
   const n = groups.reduce((t, g) => t + g.rows.length, 0);
   const oldest = groups.flatMap((g) => g.rows).sort((a, b) => parse(a.at) - parse(b.at))[0];
   const loading = (inbox.loading && !inbox.data) || (reviews.loading && !reviews.data);
+
+  const flat = groups.flatMap((g) => g.rows);
+  const selected = flat.filter((r) => sel.has(r.key));
+  const toggle = (key: string) =>
+    setSel((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const hideRows = (rows: Row[], mode: HideMode) => {
+    setSel(new Set());
+    hidden.hide(rows, mode);
+  };
+  const removeReview = async (id: number) => {
+    try {
+      const { cleared } = await api.clearReviews([id]);
+      reviews.reload();
+      showToast({
+        msg: "Removed",
+        undo: async () => {
+          await api.restoreReviews(cleared);
+          reviews.reload();
+        },
+      });
+    } catch (e) {
+      showToast({ msg: e instanceof Error ? e.message : String(e) });
+    }
+  };
+  // J/K move, X select, E hide until it changes, ⇧E for good, ⌫ remove (a review) or hide, Esc clears. Z (undo) is the toast's.
+  const keysRef = useRef({ flat, focus, selected, tab, hideRows, removeReview, toggle });
+  keysRef.current = { flat, focus, selected, tab, hideRows, removeReview, toggle };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const { flat, focus, selected, tab, hideRows, removeReview, toggle } = keysRef.current;
+      if (tab !== "inbox" || !flat.length) return;
+      const i = Math.max(0, flat.findIndex((r) => r.key === focus));
+      const cur = focus ? flat.find((r) => r.key === focus) : undefined;
+      const k = e.key.toLowerCase();
+      if (k === "j" || e.key === "ArrowDown") setFocus(flat[Math.min(flat.length - 1, focus ? i + 1 : 0)]!.key);
+      else if (k === "k" || e.key === "ArrowUp") setFocus(flat[Math.max(0, i - 1)]!.key);
+      else if (k === "x" && cur) toggle(cur.key);
+      else if (k === "e") {
+        const rows = selected.length ? selected : cur ? [cur] : [];
+        if (!rows.length) return;
+        hideRows(rows, e.shiftKey ? "good" : "change");
+      } else if ((e.key === "Backspace" || e.key === "Delete") && (selected.length || cur)) {
+        if (selected.length) hideRows(selected, "change");
+        else if (cur!.reviewId) removeReview(cur!.reviewId);
+        else hideRows([cur!], "change");
+      } else if (e.key === "Escape") setSel(new Set());
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Page
@@ -124,10 +210,26 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
             : `${n} ${n === 1 ? "thing needs" : "things need"} you. Oldest is from ${oldest && Date.now() - parse(oldest.at) > DAY ? timeAgo(oldest.at) : "today"}.`
       }
     >
+      <InboxTabs
+        tab={tab}
+        onTab={(t) => {
+          setTab(t);
+          setSel(new Set());
+        }}
+        counts={{ inbox: flat.length, hidden: hidden.items.length }}
+      />
       {inbox.error && !inbox.data && <p className="m-0 text-[14px] text-del">{inbox.error}</p>}
       {error && <p className="m-0 text-[14px] text-del">{error}</p>}
+      {tab === "inbox" && selected.length > 0 && <SelectionBar count={selected.length} onHide={(m) => hideRows(selected, m)} onClear={() => setSel(new Set())} />}
 
-      {groups.map((g) => (
+      {tab === "hidden" &&
+        (hidden.items.length ? (
+          <HiddenList items={hidden.items} onRestore={hidden.restore} />
+        ) : (
+          <InboxEmpty hiddenTab hiddenCount={0} onShowHidden={() => setTab("hidden")} />
+        ))}
+
+      {tab === "inbox" && groups.map((g) => (
         <section key={g.label} className="flex flex-col gap-3">
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <div className="flex flex-wrap items-baseline gap-2.5">
@@ -139,11 +241,18 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
           {g.rows.length > 0 && (
             <ul className="m-0 list-none overflow-hidden rounded-xl border border-line bg-surface p-0">
               {g.rows.map((r, i) => (
-                <li key={r.key} className={`flex flex-wrap items-center ${i ? "border-t border-line" : ""}`}>
+                <li
+                  key={r.key}
+                  onMouseEnter={() => setFocus(r.key)}
+                  className={`group relative flex flex-wrap items-center ${i ? "border-t border-line" : ""} ${sel.has(r.key) ? "bg-accent-soft" : focus === r.key ? "bg-hover" : ""}`}
+                >
+                  {focus === r.key && <span aria-hidden className="absolute top-2.5 bottom-2.5 left-0 w-[3px] rounded-r-sm bg-accent" />}
+                  <RowCheck on={sel.has(r.key)} visible={sel.size > 0 || focus === r.key} onToggle={() => toggle(r.key)} />
                   <button
                     onClick={r.go}
+                    onFocus={() => setFocus(r.key)}
                     disabled={starting != null}
-                    className="flex min-h-[76px] min-w-0 flex-1 cursor-pointer items-center gap-4 border-0 bg-transparent px-[18px] py-3.5 text-left text-fg hover:bg-hover"
+                    className="flex min-h-[76px] min-w-0 flex-1 cursor-pointer items-center gap-4 border-0 bg-transparent py-3.5 pr-[18px] pl-2 text-left text-fg"
                   >
                     <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
                       <span className="flex min-w-0 items-center gap-2 text-[15px] font-medium">
@@ -176,6 +285,12 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
                       <Sym name="arrow_forward" size={16} className="text-fg-3" />
                     </span>
                   </button>
+                  {sel.size === 0 && (
+                    <HideButton
+                      onHide={(m) => hideRows([r], m)}
+                      className={`my-1.5 mr-[18px] ${focus === r.key ? "" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"}`}
+                    />
+                  )}
                   {r.stack && (
                     <span className="my-1.5 mr-[18px] ml-auto">
                       <ReviewStackButton repo={r.stack.repo} pr={r.stack.pr} compact />
@@ -196,9 +311,23 @@ export function Home({ inbox, repo, runs }: { inbox: AsyncInbox; repo: string | 
           )}
         </section>
       ))}
-      {!loading && groups.length === 0 && (
-        <p className="m-0 rounded-xl border border-dashed border-line-strong p-7 text-center text-[15px] text-fg-3">Nothing is waiting on you.</p>
+      {tab === "inbox" && !loading && groups.length === 0 && (
+        <InboxEmpty hiddenTab={false} hiddenCount={hidden.items.length} onShowHidden={() => setTab("hidden")} />
       )}
+      {tab === "inbox" && flat.length > 0 && (
+        <KeyHints
+          keys={[
+            ["J K", "move"],
+            ["X", "select"],
+            ["E", "hide until it changes"],
+            ["⇧E", "hide for good"],
+            ["⌫", "remove or hide"],
+            ["Z", "undo"],
+            ["esc", "clear selection"],
+          ]}
+        />
+      )}
+      {toast}
     </Page>
   );
 }
@@ -232,6 +361,8 @@ function yourWork(
     if (!r) continue;
     rows.push({
       key: `branch:${b.name}`,
+      hideKey: `branch:${s.repo}:${b.name}`,
+      stamp: b.updatedAt,
       kind,
       title: b.title,
       reason: r.reason,
@@ -249,6 +380,8 @@ function yourWork(
     if (!r) continue;
     rows.push({
       key: `pr:${p.number}`,
+      hideKey: `pr:${s.repo}#${p.number}`,
+      stamp: p.updatedAt,
       kind: p.isDraft ? "Draft" : "PR",
       title: p.title,
       reason: r.reason,

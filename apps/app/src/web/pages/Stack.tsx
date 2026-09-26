@@ -7,6 +7,7 @@ import { api, navigate, useCopy, useLayout, useNow } from "../api";
 import { useBunnyMood, type MoodReport } from "../components/Bunny";
 import { DISMISS_REASONS, SELF_REASONS, SEVERITY, Snippet } from "../components/Walkthrough";
 import { Inline, Spinner, Sym, card, plain } from "../components/ui";
+import { ConfirmPop } from "../components/Tidy";
 
 /** m:ss for a duration in ms. */
 const elapsedText = (ms: number) => {
@@ -28,6 +29,7 @@ const STATE: Record<LayerState, { label: string; icon?: string; color: string; b
   changed: { label: "Changed since review", icon: "update", color: "var(--warn)", bg: "var(--warn-soft)" },
   merged: { label: "Merged", icon: "merge", color: "var(--text-3)", bg: "var(--sunken)" },
   skipped: { label: "Skipped", icon: "do_not_disturb_on", color: "var(--text-3)", bg: "var(--sunken)" },
+  stopped: { label: "Stopped", icon: "stop_circle", color: "var(--text-2)", bg: "var(--sunken)" },
 };
 const SEG: Record<LayerState, string> = {
   waiting: "var(--line)",
@@ -41,6 +43,7 @@ const SEG: Record<LayerState, string> = {
   changed: "var(--warn)",
   merged: "var(--line-strong)",
   skipped: "var(--line-strong)",
+  stopped: "var(--line-strong)",
 };
 const KIND: Record<StackFinding["kind"], string> = { relies: "Relies on another layer", repeated: "Repeated across layers", fixed: "Fixed later in the stack", breaks: "Layers clash" };
 const EVENTS: Array<{ key: ReviewEvent; label: string }> = [
@@ -245,7 +248,7 @@ function Layers(props: { stack: StackDetail; onChange: (s: StackDetail) => void;
 
   // Big stacks: collapse the middle, keeping the ends and anything that needs you.
   const collapsible = layers.length > 8;
-  const keep = (l: StackLayer, i: number) => i < 2 || i >= layers.length - 2 || ["failed", "changed", "reviewing", "scanning", "decide"].includes(l.state);
+  const keep = (l: StackLayer, i: number) => i < 2 || i >= layers.length - 2 || ["failed", "changed", "reviewing", "scanning", "decide", "stopped"].includes(l.state);
   const rows: Array<{ layer: StackLayer; pos: number } | { gap: StackLayer[] }> = [];
   layers.forEach((l, i) => {
     if (!collapsible || expanded || keep(l, i)) rows.push({ layer: l, pos: i + 1 });
@@ -386,6 +389,7 @@ function Layers(props: { stack: StackDetail; onChange: (s: StackDetail) => void;
         <div className="sticky bottom-0 z-15 mt-auto pb-3">
           <div className={`${card} flex flex-wrap items-center gap-x-3 gap-y-2 py-2 pr-2 pl-4 shadow-bar`}>
             <p className="m-0 min-w-0 flex-[1_1_200px] text-[14px] text-fg-2">{bar.text}</p>
+            {(running || current.length > 0 || stack.cross.state === "running") && <StopAll stack={stack} busy={busy !== null} act={act} up />}
             <button onClick={bar.go} disabled={busy !== null} className="ml-auto h-[38px] flex-none cursor-pointer rounded-lg border-0 bg-accent px-3.5 text-[13.5px] font-semibold whitespace-nowrap text-on-accent disabled:opacity-60">
               {busy === "run" || busy === "pause" ? <Spinner size={13} light /> : bar.cta}
             </button>
@@ -498,8 +502,15 @@ function Layers(props: { stack: StackDetail; onChange: (s: StackDetail) => void;
             <p className="m-0 text-[13.5px] leading-[1.55] text-fg-2">
               {stack.cross.state === "done"
                 ? "Nothing that spans layers. Each layer's own findings are all there is."
-                : "Runs once every layer has a deep review. It looks for code one PR adds and another relies on, problems a later PR fixes, and the same finding repeated in several layers."}
+                : stack.cross.state === "stopped"
+                  ? "Stopped with Review all, so it won't start on its own. It runs again when you start Review all."
+                  : "Runs once every layer has a deep review. It looks for code one PR adds and another relies on, problems a later PR fixes, and the same finding repeated in several layers."}
             </p>
+            {stack.cross.state === "stopped" && active.filter((l) => ["decide", "submitted", "approved", "changed"].includes(l.state)).length >= 2 && (
+              <button onClick={() => act("cross", () => api.stackCross(stack.id))} className="mt-3 h-9 cursor-pointer rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium hover:bg-hover">
+                Run it now
+              </button>
+            )}
           </section>
         ) : null}
         <p className="m-0 px-1 text-[12.5px] leading-normal text-fg-3">
@@ -519,6 +530,11 @@ function LayerRow({ layer: l, pos, stack, busy, act, first }: { layer: StackLaye
   if (l.reviewId && l.state !== "waiting") actions.push({ key: "open", label: "Open", icon: "arrow_forward", primary: l.state === "decide" || l.state === "readable", go: () => navigate(`/review/${l.reviewId}`) });
   if (l.state === "waiting" && !l.skipped) actions.push({ key: `start:${l.pr}`, label: "Review", icon: "play_arrow", go: () => act(`start:${l.pr}`, () => api.stackLayerStart(stack.id, l.pr)) });
   if (l.state === "failed") actions.push({ key: `start:${l.pr}`, label: "Retry", icon: "refresh", go: () => act(`start:${l.pr}`, () => api.stackLayerStart(stack.id, l.pr)) });
+  // Stopped: Resume (before the across pass runs, it puts the layer back in), or Start again.
+  if (l.state === "stopped" && l.reviewId) {
+    actions.push({ key: `resume:${l.pr}`, label: "Resume", icon: "play_arrow", primary: true, go: () => act(`resume:${l.pr}`, () => api.resume(l.reviewId!)) });
+    actions.push({ key: `restart:${l.pr}`, label: "Start again", icon: "restart_alt", go: () => act(`restart:${l.pr}`, () => api.restart(l.reviewId!)) });
+  }
   if (l.state !== "merged" && !RUNNING.includes(l.state) && l.state !== "submitted" && l.state !== "approved")
     actions.push({ key: `skip:${l.pr}`, label: l.skipped ? "Include" : "Skip", icon: l.skipped ? "add" : "block", go: () => act(`skip:${l.pr}`, () => api.stackLayerSkip(stack.id, l.pr, !l.skipped)) });
   const counts = (["critical", "high", "medium", "low"] as Severity[]).filter((k) => l.counts[k] > 0);
@@ -592,8 +608,114 @@ function LayerRow({ layer: l, pos, stack, busy, act, first }: { layer: StackLaye
             {a.label}
           </button>
         ))}
+        {(l.state === "scanning" || l.state === "reviewing") && l.reviewId && <LayerStop layer={l} pos={pos} size={stack.layers.length} busy={busy} act={act} />}
       </div>
     </div>
+  );
+}
+
+// ---------- stop a layer, or Stop Review all ----------
+
+/**
+ * Stop one running layer. The others keep going; the across pass runs without it. The confirm sits
+ * in the row itself (the layer list clips popovers).
+ */
+function LayerStop({ layer: l, pos, size, busy, act }: { layer: StackLayer; pos: number; size: number; busy: string | null; act: (k: string, fn: () => Promise<unknown>) => void }) {
+  const [ask, setAsk] = useState(false);
+  const key = `stop:${l.pr}`;
+  if (ask)
+    return (
+      <span role="dialog" aria-label={`Stop layer ${pos} of ${size}?`} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface py-1 pr-1 pl-2.5 shadow-pop">
+        <span className="text-[12.5px] text-fg-2">
+          <b className="font-semibold text-fg">Stop layer {pos} of {size}?</b> Other layers keep going.
+        </span>
+        <button autoFocus onClick={() => setAsk(false)} className="h-[26px] cursor-pointer rounded-md border border-line-strong bg-surface px-2 text-[12px] font-medium text-fg hover:bg-hover">
+          Keep running
+        </button>
+        <button
+          onClick={() => {
+            setAsk(false);
+            act(key, () => api.cancel(l.reviewId!));
+          }}
+          className="h-[26px] cursor-pointer rounded-md border-0 bg-del px-2 text-[12px] font-medium text-on-accent"
+        >
+          Stop layer
+        </button>
+      </span>
+    );
+  return (
+    <button
+      onClick={() => setAsk(true)}
+      disabled={busy === key}
+      title="Stop this layer · the across-the-stack pass will skip it"
+      aria-label={`Stop layer ${pos}`}
+      className="grid size-[34px] cursor-pointer place-items-center rounded-lg border border-line-strong bg-surface text-fg-2 hover:border-del hover:bg-del-soft hover:text-del disabled:opacity-60"
+    >
+      {busy === key ? <Spinner size={13} /> : <Sym name="stop" size={18} />}
+    </button>
+  );
+}
+
+/** Stop Review all: stops running layers and the across pass. Keep finished layers, or throw it all away. */
+function StopAll({ stack, busy, act, up }: { stack: StackDetail; busy: boolean; act: (k: string, fn: () => Promise<unknown>) => void; up?: boolean }) {
+  const [ask, setAsk] = useState(false);
+  const [keep, setKeep] = useState(true);
+  const live = stack.layers.filter((l) => !l.skipped && l.state !== "merged");
+  const runningN = live.filter((l) => RUNNING.includes(l.state)).length;
+  const queued = stack.runState === "running" ? live.filter((l) => l.state === "waiting").length : 0;
+  const finished = live.filter((l) => ["decide", "changed"].includes(l.state));
+  const findings = finished.reduce((n, l) => n + l.total, 0);
+  const parts = [runningN ? `Stops ${runningN} running` : null, queued ? `${queued} queued won't start` : null].filter(Boolean).join(", ");
+  const radio = (on: boolean, title: string, sub: string, pick: () => void) => (
+    <button
+      role="radio"
+      aria-checked={on}
+      onClick={pick}
+      className={`flex cursor-pointer gap-2.5 rounded-lg border-0 px-2 py-[7px] text-left ${on ? "bg-accent-soft" : "bg-transparent hover:bg-hover"}`}
+    >
+      <span className={`mt-[3px] size-3.5 flex-none rounded-full bg-surface ${on ? "border-4 border-accent" : "border-[1.5px] border-line-strong"}`} />
+      <span className="flex flex-col">
+        <span className="text-[13px] font-medium text-fg">{title}</span>
+        <span className="text-[12px] text-fg-3">{sub}</span>
+      </span>
+    </button>
+  );
+  return (
+    <span className="relative flex-none">
+      <button
+        onClick={() => setAsk(true)}
+        disabled={busy}
+        className="inline-flex h-[38px] cursor-pointer items-center gap-[5px] rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg-2 hover:border-del hover:bg-del-soft hover:text-del disabled:opacity-60"
+      >
+        <Sym name="stop_circle" size={16} />
+        Stop Review all
+      </button>
+      {ask && (
+        <ConfirmPop
+          title="Stop Review all?"
+          body={`${parts ? `${parts}. ` : ""}The across-the-stack pass won't run.`}
+          cancel="Keep going"
+          confirm="Stop all"
+          up={up}
+          width={320}
+          onConfirm={() => {
+            setAsk(false);
+            act("stopall", () => api.stackStop(stack.id, keep).then((r) => r.stack));
+          }}
+          onClose={() => setAsk(false)}
+        >
+          <div role="radiogroup" className="flex flex-col gap-0.5">
+            {radio(
+              keep,
+              "Keep finished layers",
+              finished.length ? `${finished.length === 1 ? "Layer" : "Layers"} ${finished.map((l) => stack.layers.indexOf(l) + 1).join(", ")} · ${findings} ${findings === 1 ? "finding" : "findings"}` : "Nothing has finished yet",
+              () => setKeep(true),
+            )}
+            {radio(!keep, "Throw it all away", "Start the stack from scratch next time. Posted reviews stay.", () => setKeep(false))}
+          </div>
+        </ConfirmPop>
+      )}
+    </span>
   );
 }
 

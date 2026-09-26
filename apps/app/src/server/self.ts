@@ -32,7 +32,7 @@ function existingSelf(repo: string, where: string, arg: string | number): number
   const row = db
     .query(
       `SELECT v.id FROM reviews v JOIN repos r ON r.id = v.repo_id
-       WHERE r.owner = ? AND r.name = ? AND v.mode = 'self' AND v.phase != 'failed' AND ${where} ORDER BY v.id DESC LIMIT 1`,
+       WHERE r.owner = ? AND r.name = ? AND v.mode = 'self' AND v.phase != 'failed' AND v.cleared_at IS NULL AND ${where} ORDER BY v.id DESC LIMIT 1`,
     )
     .get(owner!, name!, arg) as { id: number } | null;
   return row?.id ?? null;
