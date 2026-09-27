@@ -317,9 +317,9 @@ export function rerunSelfReview(id: number) {
       );
       const { diff, files } = await diffWithStats(snap.path, snap.mergeBase);
       db.run(
-        `UPDATE reviews SET head_sha = ?, merge_base = ?, worktree_path = ?, diff_text = ?, files_json = ?, dirty_files = ?,
+        `UPDATE reviews SET head_sha = ?, branch_sha = ?, merge_base = ?, worktree_path = ?, diff_text = ?, files_json = ?, dirty_files = ?,
                 additions = ?, deletions = ?, changed_files = ? WHERE id = ?`,
-        [snap.headSha, snap.mergeBase, snap.path, diff, JSON.stringify(files), snap.dirtyFiles,
+        [snap.headSha, snap.branchSha, snap.mergeBase, snap.path, diff, JSON.stringify(files), snap.dirtyFiles,
          files.reduce((n, f) => n + f.additions, 0), files.reduce((n, f) => n + f.deletions, 0), files.length, id],
       );
       wt = { path: snap.path, mergeBase: snap.mergeBase };
@@ -327,8 +327,8 @@ export function rerunSelfReview(id: number) {
       const pr = await prView(refOf(r));
       const w = await prepareWorktree({ reviewId: id, owner: r.owner, repo: r.repo, prNumber: r.pr_number, headSha: pr.headRefOid, baseRef: r.base_ref }, progress);
       const diff = await prDiff(refOf(r));
-      db.run("UPDATE reviews SET head_sha = ?, merge_base = ?, worktree_path = ?, diff_text = ?, files_json = ?, additions = ?, deletions = ?, changed_files = ? WHERE id = ?", [
-        pr.headRefOid, w.mergeBase, w.path, diff, JSON.stringify(pr.files), pr.additions, pr.deletions, pr.changedFiles, id,
+      db.run("UPDATE reviews SET head_sha = ?, branch_sha = ?, merge_base = ?, worktree_path = ?, diff_text = ?, files_json = ?, additions = ?, deletions = ?, changed_files = ? WHERE id = ?", [
+        pr.headRefOid, pr.headRefOid, w.mergeBase, w.path, diff, JSON.stringify(pr.files), pr.additions, pr.deletions, pr.changedFiles, id,
       ]);
       wt = { path: w.path, mergeBase: w.mergeBase };
     }

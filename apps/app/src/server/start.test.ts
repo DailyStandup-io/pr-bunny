@@ -2,11 +2,11 @@
 // review, and a stack running Review all owns the PR's review. `gh` is answered from the mock
 // fixtures (src/mock); the overview never gets past fetching the diff, so each started review stays
 // "recon_running" (in flight).
-import { beforeAll, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { findPr, STACKS, type FixturePr } from "../mock/fixtures";
 import { fixtureGh } from "../mock/ghStub";
 
-const real = await import("./gh");
+const real = { ...(await import("./gh")) };
 const fixtures = fixtureGh();
 let prViewCalls = 0;
 let diffsToServe = 0;
@@ -23,11 +23,18 @@ mock.module("./gh", () => ({
   prDiff: (ref: Parameters<typeof fixtures.prDiff>[0]) => (diffsToServe > 0 ? (diffsToServe--, fixtures.prDiff(ref)) : new Promise<string>(() => {})),
 }));
 // A re-review goes straight to the deep review: don't run it, so the new review stays "read" (in flight).
-const realDeep = await import("./deep");
+const realDeep = { ...(await import("./deep")) };
 mock.module("./deep", () => ({ ...realDeep, startDeepReview: () => {} }));
 // Never run a real agent (e.g. a recon that got a served diff).
-const realAgents = await import("./agents");
+const realAgents = { ...(await import("./agents")) };
 mock.module("./agents", () => ({ ...realAgents, runAgent: async () => { throw new Error("No agent in tests"); } }));
+
+// Module mocks outlive this file: put the real modules back for the test files that run after it.
+afterAll(() => {
+  mock.module("./gh", () => real);
+  mock.module("./deep", () => realDeep);
+  mock.module("./agents", () => realAgents);
+});
 
 const { db } = await import("./db/db");
 const { startReview, setPhase } = await import("./reviews");

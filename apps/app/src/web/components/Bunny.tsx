@@ -22,7 +22,10 @@ export const BUNNY_FACES = {
 };
 const F = BUNNY_FACES;
 
-export type Mood = "idle" | "working" | "issues" | "fixed" | "clean" | "rejected" | "approved" | "commented" | "update" | "caughtUp" | "error" | "stopped";
+export type Mood =
+  | "idle" | "working" | "issues" | "fixed" | "clean" | "rejected" | "approved" | "commented" | "update" | "caughtUp" | "error" | "stopped"
+  | "prChecks" | "prReview" | "prBlocked" | "prMerge" | "shipIt" | "prClosed"
+  | "allRead";
 
 const MOODS: Record<Mood, { face: string | null; say: string }> = {
   idle: { face: F.smile, say: "Hi! Pick a PR and I'll take a look." },
@@ -38,6 +41,15 @@ const MOODS: Record<Mood, { face: string | null; say: string }> = {
   error: { face: F.crying, say: "Couldn't reach your coding agent. Check Settings." },
   // Neutral, not sad: you chose to stop it.
   stopped: { face: F.wink, say: "Stopped. Resume whenever you like." },
+  // A self-review's PR on GitHub (Ready check); pages pass the PR number in `say`.
+  prChecks: { face: F.wobbly, say: "Checks are running…" },
+  prReview: { face: F.smile, say: "It's in review." },
+  prBlocked: { face: F.wink, say: "It can’t merge yet." },
+  prMerge: { face: F.surprised, say: "Good to merge." },
+  shipIt: { face: F.shades, say: "Merged. Nice one." },
+  prClosed: { face: F.smile, say: "It was closed without merging." },
+  // A moment's reaction (flashBunny), not a standing mood.
+  allRead: { face: F.happy, say: "All read. Nice and tidy." },
 };
 
 /** What a page wants the bunny to show. `go` runs when the bunny is clicked (a path, or a callback). */
@@ -77,6 +89,33 @@ export function usePageMood(): MoodReport | null {
   );
 }
 
+// ---------- a brief reaction, over whatever else it's showing ----------
+
+let flash: MoodReport | null = null;
+let flashTimer: ReturnType<typeof setTimeout> | undefined;
+const flashListeners = new Set<() => void>();
+const setFlash = (m: MoodReport | null) => {
+  flash = m;
+  flashListeners.forEach((l) => l());
+};
+
+/** Says one line for a few seconds (e.g. after Mark all read), then goes back to its mood quietly. */
+export function flashBunny(report: MoodReport, ms = 5_500) {
+  clearTimeout(flashTimer);
+  setFlash(report);
+  flashTimer = setTimeout(() => setFlash(null), ms);
+}
+
+export function useFlash(): MoodReport | null {
+  return useSyncExternalStore(
+    (cb) => {
+      flashListeners.add(cb);
+      return () => flashListeners.delete(cb);
+    },
+    () => flash,
+  );
+}
+
 // ---------- the mascot ----------
 
 const REST_AFTER_MS = 20_000;
@@ -94,15 +133,24 @@ export function Bunny({ report, compact = false }: { report: MoodReport; compact
   const [typed, setTyped] = useState<{ sig: string; n: number } | null>(null);
   const [hover, setHover] = useState(false);
   const first = useRef(true);
+  // The line before a flash: coming back to it after the flash isn't news, so it isn't said again.
+  const beforeFlash = useRef<{ sig: string; flash: string } | null>(null);
+  const lastSig = useRef<string | null>(null);
 
   useEffect(() => {
     const timers: Array<ReturnType<typeof setTimeout>> = [];
     const isFirst = first.current;
     first.current = false;
+    const prev = lastSig.current;
+    lastSig.current = sig;
+    const isFlash = report.mood === "allRead";
+    if (isFlash && prev) beforeFlash.current = { sig: prev, flash: sig };
+    const returning = !isFlash && beforeFlash.current?.flash === prev && beforeFlash.current?.sig === sig;
+    if (!isFlash) beforeFlash.current = null;
     setRested(null);
     if (report.mood !== "working" && report.mood !== "idle") timers.push(setTimeout(() => setRested(sig), REST_AFTER_MS));
     // No speech on first load or for idle; otherwise type the line out like it's being said.
-    if (isFirst || report.mood === "idle" || !say) {
+    if (isFirst || returning || report.mood === "idle" || !say) {
       setTyped(null);
       return () => timers.forEach(clearTimeout);
     }

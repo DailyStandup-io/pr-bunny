@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0 “Hay” — 2026-09-26
+
+### Added
+- **Ready check follows your PR on GitHub.** A self-review finds the PR for its branch on its own,
+  even one you opened elsewhere, and keeps it current: checks, reviews, what blocks the merge, and
+  commits pushed since your last run (with a nudge to re-run). The header shows the PR, its state
+  and when it was last checked; click to check now.
+- **Merge from PR Bunny.** On your own PRs, a Merge card shows what's blocking (draft, conflicts,
+  failed or running checks, branch protection) and, once nothing is, lets you pick the method
+  (what the repo allows; squash by default), delete the branch, and merge after a confirm step.
+  It merges exactly the commit you were shown. Drafts get "Mark ready for review".
+- **Reviewers:** see who's on the PR and how they've reviewed, and add anyone by handle
+  (collaborators and teams), not only the suggestions.
+
+### Changed
+- Self-reviews go from "In review · #9" (with a checks or approval icon) to "Done · merged" or
+  "Closed" in the lists, following the PR on GitHub, instead of counting as done once opened.
+- Findings: the summary bar stays under the tabs as you scroll, folding its summary away while it's
+  stuck. After Accept or Dismiss the page scrolls back up to the next finding. The findings list
+  scrolls with the page, and Ask stays just below the bar.
+- Activity bell: hovering it looks like the other sidebar items (pink only once you click to keep
+  it open). The badge stays until you open a notification or Mark all read, which now closes the
+  panel.
+- PR Bunny counts installs and update checks anonymously; no identifiers are sent or stored. The
+  installer adds your Mac type and the app adds its version to prbunny.dev requests, which only
+  increment counters. Nothing is saved on your Mac for it, and GitHub or a custom
+  `PR_BUNNY_UPDATE_URL` / `PR_BUNNY_DOWNLOAD_URL` gets no parameters.
+
+### Fixed
+- Hidden PRs no longer show in the sidebar's Inbox card or light the Inbox dot. Hiding or restoring
+  a PR anywhere (Inbox, Settings › Housekeeping) updates the sidebar at once.
+
 ## 0.3.2 “Garlic” — 2026-09-26
 
 ### Fixed

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { Inbox, InboxEntry } from "../shared/types";
+import type { HiddenItem, Inbox, InboxEntry } from "../shared/types";
 import { setDemoAvatars } from "./avatar";
 import { api, navigate, useActivity, useAsync, useLayout, usePath, usePref, useTheme, useUpdate } from "./api";
-import { Bunny, usePageMood, type MoodReport } from "./components/Bunny";
+import { isHiddenPr, useHiddenItems } from "./hidden";
+import { Bunny, useFlash, usePageMood, type MoodReport } from "./components/Bunny";
 import { Invaders, useKonami } from "./components/Invaders";
 import { appleTouchIcon, icon32 } from "@pr-bunny/brand";
 import { ActivityBell } from "./components/ActivityBell";
@@ -23,10 +24,12 @@ import { StackPage } from "./pages/Stack";
 import { Icon, type IconName } from "@pr-bunny/icons";
 
 /** Inbox icon: a dot while PRs wait on you that you haven't posted a review for, a check when none are assigned. */
-function inboxState(inbox: Inbox | undefined): "default" | "unread" | "caught up" {
+function inboxState(inbox: Inbox | undefined, hidden: HiddenItem[]): "default" | "unread" | "caught up" {
   if (!inbox) return "default";
-  if (inbox.assigned.length === 0) return "caught up";
-  return inbox.assigned.some((p) => p.review?.phase !== "submitted") ? "unread" : "default";
+  // PRs you've hidden don't count: they're out of the inbox until they change or you restore them.
+  const assigned = inbox.assigned.filter((p) => !isHiddenPr(hidden, p));
+  if (assigned.length === 0) return "caught up";
+  return assigned.some((p) => p.review?.phase !== "submitted") ? "unread" : "default";
 }
 
 // The bunny favicon, when this build has the art (it's licensed and not in the repo).
@@ -100,7 +103,8 @@ function Shell() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ib = inboxState(inbox.data);
+  const hidden = useHiddenItems().items;
+  const ib = inboxState(inbox.data, hidden);
   // Analytics used to be History; old links still land there.
   const analytics = path === "/analytics" || path === "/history";
   const screen = path.startsWith("/review") || path.startsWith("/stack") ? "review" : analytics ? "analytics" : path === "/settings" ? "settings" : "inbox";
@@ -128,7 +132,7 @@ function Shell() {
       navigate("/");
     }
   };
-  const pending = (inbox.data?.assigned ?? []).filter((p) => p.review?.phase !== "submitted");
+  const pending = (inbox.data?.assigned ?? []).filter((p) => p.review?.phase !== "submitted" && !isHiddenPr(hidden, p));
 
   return (
     <div className="flex min-h-screen bg-bg text-[14px] leading-normal text-fg">
@@ -217,10 +221,12 @@ function Shell() {
 function useAppMood(runs: ReturnType<typeof useActivity>, ib: ReturnType<typeof inboxState>): MoodReport {
   const update = useUpdate();
   const page = usePageMood();
+  const flash = useFlash();
   if (update?.status === "downloading") return { mood: "working", say: `Downloading ${update.latest?.version ?? "the update"}…`, go: "/settings" };
   if (update?.status === "restarting") return { mood: "working", say: "Restarting…", go: "/settings" };
   const run = runs[0];
   if (run) return { mood: "working", say: run.stage === "recon" ? "Checking out the PR…" : "Reading the diff…", go: `/review/${run.reviewId}` };
+  if (flash) return flash;
   if (page) return page;
   if (update?.status === "available") return { mood: "update", say: `Version ${update.latest?.version} is out. Update from Settings.`, go: "/settings" };
   if (update?.status === "ready") return { mood: "update", say: "Update installed. Restart from Settings to finish.", go: "/settings" };

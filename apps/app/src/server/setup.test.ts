@@ -7,6 +7,7 @@ import { resolveRepo } from "./onboarding";
 import { checkSkillPath, criteriaFrom, previewSkill, repoSkills, reviewSection, searchFiles, skillCandidates } from "./skills";
 import { newer } from "./update";
 import { RELEASE_SOURCES } from "./config";
+import { VERSION } from "../build-info";
 
 describe("review skill ranking", () => {
   const read = (texts: Record<string, string>) => async (p: string) => texts[p] ?? null;
@@ -58,10 +59,17 @@ describe("release sources", () => {
   test("prbunny.dev first, then GitHub Releases for tag v<version>", () => {
     if (RELEASE_SOURCES === "off") throw new Error("expected sources");
     expect(RELEASE_SOURCES.map((s) => s.latest)).toEqual([
-      "https://prbunny.dev/releases/latest.json",
+      `https://prbunny.dev/releases/latest.json?v=${VERSION}`,
       "https://github.com/DailyStandup-io/pr-bunny/releases/latest/download/latest.json",
     ]);
     expect(RELEASE_SOURCES[1]!.file("0.2.0", "bunny-darwin-arm64")).toBe("https://github.com/DailyStandup-io/pr-bunny/releases/download/v0.2.0/bunny-darwin-arm64");
+    expect(RELEASE_SOURCES[1]!.download).toBeUndefined();
+  });
+  test("prbunny.dev counts the update from this version on the binary, not its checksum", () => {
+    if (RELEASE_SOURCES === "off") throw new Error("expected sources");
+    const site = RELEASE_SOURCES[0]!;
+    expect(site.file("0.2.0", "bunny-darwin-arm64")).toBe("https://prbunny.dev/releases/0.2.0/bunny-darwin-arm64");
+    expect(site.download!("0.2.0", "bunny-darwin-arm64")).toBe(`https://prbunny.dev/releases/0.2.0/bunny-darwin-arm64?from=${VERSION}`);
   });
 });
 

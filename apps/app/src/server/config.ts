@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { GITHUB_REPO } from "../build-info";
+import { GITHUB_REPO, VERSION } from "../build-info";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -54,6 +54,8 @@ export const CADDY_LABEL = "dev.prbunny.caddy";
  * - prbunny.dev/releases: our domain, which redirects to GitHub (so storage can move later
  *   without breaking installed copies)
  * - GitHub Releases directly, in case the site is down
+ * prbunny.dev counts checks (by the running version, `?v=`) and updates (`?from=` on the binary);
+ * only counters, nothing that identifies this copy. GitHub and custom URLs get no parameters.
  * PR_BUNNY_UPDATE_URL replaces both with one base URL laid out like dist/ (`<base>/latest.json`,
  * `<base>/<version>/<file>`); "off" disables update checks.
  */
@@ -61,6 +63,8 @@ export interface ReleaseSource {
   name: string;
   latest: string;
   file: (version: string, name: string) => string;
+  /** The binary's URL for an update from this version, when it differs from `file` (its .sha256 doesn't). */
+  download?: (version: string, name: string) => string;
 }
 const custom = env("UPDATE_URL")?.replace(/\/+$/, "");
 const github = `https://github.com/${GITHUB_REPO}/releases`;
@@ -70,7 +74,12 @@ export const RELEASE_SOURCES: ReleaseSource[] | "off" =
     : custom
       ? [{ name: custom, latest: `${custom}/latest.json`, file: (v, f) => `${custom}/${v}/${f}` }]
       : [
-          { name: "prbunny.dev", latest: "https://prbunny.dev/releases/latest.json", file: (v, f) => `https://prbunny.dev/releases/${v}/${f}` },
+          {
+            name: "prbunny.dev",
+            latest: `https://prbunny.dev/releases/latest.json?v=${encodeURIComponent(VERSION)}`,
+            file: (v, f) => `https://prbunny.dev/releases/${v}/${f}`,
+            download: (v, f) => `https://prbunny.dev/releases/${v}/${f}?from=${encodeURIComponent(VERSION)}`,
+          },
           { name: "GitHub", latest: `${github}/latest/download/latest.json`, file: (v, f) => `${github}/download/v${v}/${f}` },
         ];
 

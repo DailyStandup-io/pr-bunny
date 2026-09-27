@@ -63,7 +63,11 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 if [ -n "${PR_BUNNY_VERSION:-}" ]; then ok "Version: ${B}${VERSION}${X} ${D}(pinned; latest is $(printf '%s' "$LATEST" | tr -d '[:space:]'), ${OS}/${ARCH})${X}"; else ok "Latest version: ${B}${VERSION}${X} ${D}(${OS}/${ARCH})${X}"; fi
 step "Downloading ${ASSET}…"
 if [ "$BASE" = github ]; then URL="$GITHUB/download/v$VERSION/$ASSET"; else URL="$BASE/$VERSION/$ASSET"; fi
-curl -fSL --progress-bar "$URL" -o "$TMP/bunny" || fail "download failed: $URL"
+# prbunny.dev counts installs by version and Mac type (?arch= on the binary, not its checksum);
+# nothing else is sent, and nothing is saved here. GitHub and PR_BUNNY_DOWNLOAD_URL get no parameters.
+COUNT=
+if [ -z "${PR_BUNNY_DOWNLOAD_URL:-}" ] && [ "$BASE" != github ]; then COUNT="?arch=${OS}-${ARCH}"; fi
+curl -fSL --progress-bar "$URL$COUNT" -o "$TMP/bunny" || fail "download failed: $URL"
 curl -fsSL "$URL.sha256" -o "$TMP/bunny.sha256" || fail "checksum download failed"
 
 EXPECTED="$(cut -d' ' -f1 "$TMP/bunny.sha256")"

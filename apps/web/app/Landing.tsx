@@ -407,6 +407,9 @@ export function Landing() {
           >
             GitHub
           </a>
+          <p className="m-0 w-full text-center">
+            PR Bunny counts installs and update checks anonymously; no identifiers are sent or stored.
+          </p>
         </footer>
       </div>
     </div>

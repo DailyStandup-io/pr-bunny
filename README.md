@@ -16,7 +16,7 @@ A Bun workspace (`bun install` at the root; no npm, pnpm or yarn):
 | Path | What |
 |---|---|
 | [`apps/app`](apps/app) | The app: Bun server + React UI, the `bunny` CLI, setup, the login service, the updater, and the release build (`scripts/build.ts`, `scripts/install.sh`) |
-| [`apps/web`](apps/web) | [prbunny.dev](https://prbunny.dev): the Next.js landing page. It also serves `/install` and proxies `/releases/*` |
+| [`apps/web`](apps/web) | [prbunny.dev](https://prbunny.dev): the Next.js landing page. It also serves `/install`, redirects `/releases/*` (counting installs and updates) and has a private `/stats` page |
 | [`packages/brand`](packages/brand) | The bunny art, shared by both. The faces and favicons are licensed and **not in the repo** (see below) |
 | [`packages/icons`](packages/icons) | The Hugeicons the UI uses: the free set by default; `bun run icons:pro` swaps in Hugeicons Pro locally |
 
@@ -92,6 +92,11 @@ the bunny says so, and Settings › About offers **Update to x.y.z**:
    where they left off.
 
 Running from source, it tells you to pull instead.
+
+PR Bunny counts installs and update checks anonymously; no identifiers are sent or stored. The
+installer adds your Mac type (`?arch=darwin-arm64`) and the app adds its version (`?v=`, and `?from=`
+when updating) to prbunny.dev requests, which only increment counters. Nothing is saved on your Mac
+for it, and GitHub or a custom `PR_BUNNY_UPDATE_URL` / `PR_BUNNY_DOWNLOAD_URL` gets no parameters.
 
 ## Using it
 
