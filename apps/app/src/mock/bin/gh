@@ -1,0 +1,16 @@
+#!/usr/bin/env bun
+// Fake GitHub CLI for the PR Bunny demo and tests. See src/mock/gh.ts.
+import { runGh } from "../gh";
+
+const args = process.argv.slice(2);
+// Only read stdin when a command takes input (`--input -`), so nothing blocks on a terminal.
+const stdin = args.includes("--input") ? await new Response(Bun.stdin.stream()).text() : "";
+try {
+  const res = await runGh(args, stdin);
+  if (res.stdout) process.stdout.write(res.stdout);
+  if (res.stderr) process.stderr.write(res.stderr);
+  process.exit(res.code);
+} catch (e) {
+  process.stderr.write(`mock gh: ${e instanceof Error ? e.stack ?? e.message : String(e)}\n`);
+  process.exit(1);
+}

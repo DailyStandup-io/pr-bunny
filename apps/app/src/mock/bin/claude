@@ -1,0 +1,10 @@
+#!/usr/bin/env bun
+// Fake Claude Code CLI for the PR Bunny demo and tests. See src/mock/agents-cli.ts.
+import { claudeMain } from "../agents-cli";
+
+try {
+  process.exit(await claudeMain(process.argv.slice(2)));
+} catch (e) {
+  process.stderr.write(`mock claude: ${e instanceof Error ? e.stack ?? e.message : String(e)}\n`);
+  process.exit(1);
+}

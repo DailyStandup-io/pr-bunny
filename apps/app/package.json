@@ -27,6 +27,7 @@
     "setup": "bun bin/bunny.ts setup",
     "dev": "bun ../../scripts/generate.ts && bun --hot src/server/index.ts",
     "start": "bun ../../scripts/generate.ts && NODE_ENV=production bun src/server/index.ts",
+    "demo": "bun scripts/demo.ts",
     "typecheck": "bun ../../scripts/generate.ts >/dev/null && tsc --noEmit",
     "test": "bun test",
     "build": "bun scripts/build.ts",
