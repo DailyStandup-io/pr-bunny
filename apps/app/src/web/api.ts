@@ -24,7 +24,9 @@ import type {
   SetupState,
   SkillPreview,
   CliInfo,
+  UpdatePrefs,
   UpdateState,
+  WhatsNewState,
   StackDetail,
   StackSummary,
   StackSubmissionLayer,
@@ -94,6 +96,9 @@ export const api = {
   checkUpdate: () => post<UpdateState>("/api/update/check"),
   installUpdate: () => post<UpdateState>("/api/update/install"),
   restartForUpdate: () => post<UpdateState>("/api/update/restart"),
+  whatsNew: () => request<WhatsNewState>("/api/whats-new"),
+  whatsNewSeen: () => post<WhatsNewState>("/api/whats-new/seen"),
+  saveUpdatePrefs: (patch: Partial<UpdatePrefs>) => post<WhatsNewState>("/api/update/prefs", patch),
   review: (id: number) => request<ReviewDetail>(`/api/reviews/${id}`),
   start: (pr: string, repo?: string | null) => post<{ id: number }>("/api/reviews", { pr, repo: repo ?? undefined }),
   markRead: (id: number) => post<ReviewDetail>(`/api/reviews/${id}/read`),
@@ -471,6 +476,9 @@ export const updates = {
     ),
 };
 
+/** The latest update state, outside React (e.g. right after a check finishes). */
+export const currentUpdate = () => update;
+
 export function useUpdate(): UpdateState | null {
   return useSyncExternalStore(
     (cb) => {
@@ -480,3 +488,45 @@ export function useUpdate(): UpdateState | null {
     () => update,
   );
 }
+
+// ---------- the update popup and What's new ----------
+
+let whatsNew: WhatsNewState | null = null;
+const whatsNewListeners = new Set<() => void>();
+const setWhatsNew = (w: WhatsNewState) => {
+  whatsNew = w;
+  whatsNewListeners.forEach((l) => l());
+};
+api.whatsNew().then(setWhatsNew, () => {});
+
+/** What the update popup and What's new need: the switches, the built-in notes, what's unseen. */
+export function useWhatsNew(): WhatsNewState | null {
+  return useSyncExternalStore(
+    (cb) => {
+      whatsNewListeners.add(cb);
+      return () => whatsNewListeners.delete(cb);
+    },
+    () => whatsNew,
+  );
+}
+
+/** Requests to open a dialog from elsewhere (Settings › About), handled by the app's UpdateDialogs. */
+export type UpdateDialogRequest = { kind: "popup" } | { kind: "whatsNew"; versions: string[] };
+const dialogListeners = new Set<(r: UpdateDialogRequest) => void>();
+export const onUpdateDialog = (fn: (r: UpdateDialogRequest) => void) => {
+  dialogListeners.add(fn);
+  return () => void dialogListeners.delete(fn);
+};
+
+export const updatePrefs = {
+  save: (patch: Partial<UpdatePrefs>) => api.saveUpdatePrefs(patch).then(setWhatsNew),
+  seen: () => api.whatsNewSeen().then(setWhatsNew),
+  /** Settings › About › Show it again: forget the dismissal and bring the popup back. */
+  showPopupAgain: () =>
+    api.saveUpdatePrefs({ dismissedUpdate: null }).then((w) => {
+      setWhatsNew(w);
+      dialogListeners.forEach((l) => l({ kind: "popup" }));
+    }),
+  /** Settings › About › Read the notes. */
+  openNotes: (versions: string[]) => dialogListeners.forEach((l) => l({ kind: "whatsNew", versions })),
+};

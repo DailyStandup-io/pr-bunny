@@ -1,4 +1,6 @@
 // Types shared by the server and the web app.
+import type { ReleaseNotes } from "./changelog";
+export type { NoteItem, ReleaseNotes } from "./changelog";
 
 export type Phase =
   | "recon_running"
@@ -594,6 +596,29 @@ export interface ReleaseInfo {
   name: string;
   notesUrl: string | null;
   publishedAt: string | null;
+  /** Notes for recent releases, newest first (latest.json from 0.4.2 on; empty from older releases). */
+  notes: ReleaseNotes[];
+}
+
+/** The update popup and What's new, saved on the server so every browser agrees. */
+export interface UpdatePrefs {
+  /** Settings › About › Tell me when an update is out. */
+  updatePopup: boolean;
+  /** Settings › About › Show what's new after updating. */
+  whatsNew: boolean;
+  /** The version whose popup was dismissed (Not now, ✕, Esc); the next version asks again. */
+  dismissedUpdate: string | null;
+  /** The last version whose notes were seen (or skipped: a fresh install starts here). */
+  lastSeenVersion: string | null;
+}
+
+export interface WhatsNewState {
+  prefs: UpdatePrefs;
+  current: { version: string; name: string };
+  /** Release notes built into this version, newest first. */
+  notes: ReleaseNotes[];
+  /** Notes to show now, once: every version since the last one seen, newest first. */
+  pending: { from: string | null; versions: string[] } | null;
 }
 
 export interface UpdateState {

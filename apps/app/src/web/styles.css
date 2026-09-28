@@ -36,6 +36,8 @@
   --pop-lg: 0 16px 40px oklch(0.2 0.02 80 / 0.16);
   --tip: 0 4px 12px oklch(0.2 0.02 80 / 0.18);
   --seg: 0 1px 2px oklch(0.2 0.02 80 / 0.1);
+  --scrim: oklch(0.2 0.01 80 / 0.32);
+  --dialog: 0 24px 60px oklch(0.15 0.02 60 / 0.28);
   /* Tooltips use the same surface as popover cards, so they follow the theme. */
   --tooltip: var(--surface);
   --tooltip-fg: var(--text);
@@ -77,6 +79,8 @@
   --pop-lg: 0 16px 40px oklch(0 0 0 / 0.4);
   --tip: 0 4px 12px oklch(0 0 0 / 0.35);
   --seg: 0 1px 2px oklch(0 0 0 / 0.3);
+  --scrim: oklch(0.08 0.005 80 / 0.55);
+  --dialog: 0 24px 60px oklch(0 0 0 / 0.5);
   color-scheme: dark;
 }
 
@@ -119,6 +123,8 @@
   --shadow-bar: var(--shadow);
   --shadow-pop: var(--pop);
   --shadow-pop-lg: var(--pop-lg);
+  --shadow-dialog: var(--dialog);
+  --color-scrim: var(--scrim);
   --shadow-tip: var(--tip);
   --shadow-seg: var(--seg);
 }

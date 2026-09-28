@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentInfo, Effort, ModelOption, Provider, Settings, Stage } from "../../shared/types";
-import { api, navigate, refreshAgentLabel, updates, useAsync, useLayout, useTheme, useUpdate, type ThemePref } from "../api";
+import { api, navigate, refreshAgentLabel, updatePrefs, updates, useAsync, useLayout, useTheme, useUpdate, useWhatsNew, type ThemePref } from "../api";
+import { fixesOnly } from "../../shared/changelog";
 import { Page } from "../components/Page";
 import { card, field, MaskIcon, Spinner, Sym, timeAgo } from "../components/ui";
 import { BUNNY_FACES } from "../components/Bunny";
@@ -387,11 +388,12 @@ function ModelPicker({ value, options, placeholder, onChange }: { value: string;
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
       className={`relative h-[26px] w-11 flex-none cursor-pointer rounded-full border-0 ${checked ? "bg-accent" : "bg-line-strong"}`}
     >
@@ -523,6 +525,7 @@ function About() {
           </div>
         )}
       </div>
+      <UpdateSwitches />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line bg-sunken px-[22px] py-3">
         <MaskIcon src={dailyStandupLogo} size={18} className="flex-none text-fg-2" />
         <p className="m-0 min-w-0 flex-1 text-[13px] text-fg-3">
@@ -538,6 +541,69 @@ function About() {
         </a>
       </div>
     </section>
+  );
+}
+
+/** About › the update popup and What's new: two switches (saved right away) and the notes. */
+function UpdateSwitches() {
+  const w = useWhatsNew();
+  const u = useUpdate();
+  if (!w) return null;
+  const { prefs } = w;
+  const pending = u?.status === "available" || u?.status === "downloading" || u?.status === "ready" ? u.latest?.version : undefined;
+  const hidden = prefs.updatePopup && pending && prefs.dismissedUpdate === pending;
+  const popHint = !prefs.updatePopup
+    ? "Off. The bunny still mentions new versions."
+    : hidden
+      ? `Hidden for ${pending}. It'll ask again for the next version.`
+      : "A popup once per version. Not now hides it until the next one.";
+  // From source there's no version of our own in the changelog; show the newest.
+  const mine = w.notes.find((n) => n.version === w.current.version) ?? w.notes[0];
+  const date = mine?.date ? new Date(`${mine.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+  const fixes = mine && fixesOnly(mine) ? `${mine.fixed.length} ${mine.fixed.length === 1 ? "fix" : "fixes"}` : null;
+  const row = "flex items-center gap-4 px-[22px] py-2";
+  return (
+    <div className="border-t border-line pt-2 pb-2.5">
+      <div className={row}>
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-[14px]">Tell me when an update is out</p>
+          <p className="mt-px mb-0 text-[12.5px] text-pretty text-fg-3">
+            {popHint}
+            {hidden && (
+              <>
+                {" "}
+                <button onClick={updatePrefs.showPopupAgain} className="cursor-pointer border-0 bg-transparent p-0 text-[12.5px] font-medium text-accent hover:underline">
+                  Show it again
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+        <Toggle checked={prefs.updatePopup} onChange={(v) => updatePrefs.save({ updatePopup: v })} label="Tell me when an update is out" />
+      </div>
+      <div className={row}>
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-[14px]">Show what's new after updating</p>
+          <p className="mt-px mb-0 text-[12.5px] text-pretty text-fg-3">Once, the first time you open a new version. Fix-only releases get a small note.</p>
+        </div>
+        <Toggle checked={prefs.whatsNew} onChange={(v) => updatePrefs.save({ whatsNew: v })} label="Show what's new after updating" />
+      </div>
+      {mine && (
+        <div className={row}>
+          <div className="min-w-0 flex-1">
+            <p className="m-0 text-[14px]">What's new in {mine.version}{mine.name ? ` “${mine.name}”` : ""}</p>
+            <p className="mt-px mb-0 text-[12.5px] text-fg-3">{[date && `Released ${date}`, fixes].filter(Boolean).join(" · ")}</p>
+          </div>
+          <button
+            onClick={() => updatePrefs.openNotes([mine.version])}
+            className="flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-lg border border-line bg-transparent pr-3 pl-2.5 text-[13px] whitespace-nowrap text-fg-2 hover:bg-hover hover:text-fg"
+          >
+            <Sym name="auto_awesome" size={17} />
+            Read the notes
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

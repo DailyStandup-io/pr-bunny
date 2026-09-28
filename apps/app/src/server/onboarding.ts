@@ -13,6 +13,7 @@ import { db } from "./db/db";
 import { checkoutInfo, headBranch, scanCheckouts, SEARCH_ROOTS } from "./local";
 import { checkSkillPath, defaultRef, listFiles, locationLabels } from "./skills";
 import { applySettings, getSettings, NOTIFY_KINDS, updateSettings } from "./settings";
+import { markSetupSeen } from "./whatsnew";
 
 const tildify = (p: string) => (p.startsWith(homedir()) ? `~${p.slice(homedir().length)}` : p);
 const untildify = (p: string) => (p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
@@ -205,5 +206,6 @@ export async function completeSetup(input: SetupInput): Promise<SetupState> {
     );
   })();
   writeFileSync(CONFIG_FILE, `${JSON.stringify(config, null, 2)}\n`);
+  markSetupSeen();
   return setupState();
 }

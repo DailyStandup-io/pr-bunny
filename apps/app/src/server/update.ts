@@ -1,17 +1,17 @@
 // Self-update for the installed `bunny` binary. Checks latest.json (RELEASE_SOURCES), downloads the
 // build for this Mac, verifies its sha256 and that it runs, swaps it in place, and restarts the
-// launchd service onto it. Installing and restarting only happen from a click in Settings;
-// checking runs in the background.
+// launchd service onto it. Installing and restarting only happen from a click (Settings › About or
+// the update popup); checking runs in the background.
 //
 // Release files (written by scripts/build.ts, attached to the GitHub Release for tag v<version>):
-//   latest.json                    { version, name, notesUrl?, publishedAt? }
+//   latest.json                    { version, name, notesUrl?, publishedAt?, notes? } (notes: recent releases' changelog entries)
 //   bunny-<os>-<arch>              the binary
 //   bunny-<os>-<arch>.sha256
 // Found at prbunny.dev/releases/… (redirects to GitHub), else on GitHub directly (see config.ts).
 import { $ } from "bun";
 import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ReleaseInfo, UpdateState } from "../shared/types";
+import type { NoteItem, ReleaseInfo, ReleaseNotes, UpdateState } from "../shared/types";
 import { CODENAME, COMPILED, VERSION } from "../build-info";
 import { APP_LABEL, DATA_DIR, env, RELEASE_SOURCES, type ReleaseSource } from "./config";
 
@@ -105,7 +105,20 @@ async function fetchLatest(source: ReleaseSource): Promise<ReleaseInfo> {
     name: typeof body.name === "string" ? body.name : "",
     notesUrl: typeof body.notesUrl === "string" && /^https:\/\//.test(body.notesUrl) ? body.notesUrl : null,
     publishedAt: typeof body.publishedAt === "string" ? body.publishedAt : null,
+    notes: releaseNotes(body.notes),
   };
+}
+
+/** latest.json's `notes`, kept only if well formed (it's shown in the update popup). */
+function releaseNotes(raw: unknown): ReleaseNotes[] {
+  if (!Array.isArray(raw)) return [];
+  const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+  const items = (v: unknown): NoteItem[] =>
+    Array.isArray(v) ? v.slice(0, 30).map((i) => ({ title: typeof i?.title === "string" ? str(i.title, 200) : null, text: str(i?.text, 1000) })) : [];
+  return raw
+    .slice(0, 20)
+    .filter((n) => typeof n?.version === "string" && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(n.version))
+    .map((n) => ({ version: n.version, name: str(n.name, 60), date: typeof n.date === "string" ? str(n.date, 10) : null, added: items(n.added), changed: items(n.changed), fixed: items(n.fixed) }));
 }
 
 /** Downloads and installs the latest version in the background; poll updateState() for progress. */
