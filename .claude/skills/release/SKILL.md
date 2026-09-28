@@ -64,7 +64,11 @@ The code is public (MIT). The bunny art ships inside the binary, which is fine, 
 3. **Update `CHANGELOG.md`** at the repo root. Create it if missing. Add a
    `## <version> “<codename>” — <YYYY-MM-DD>` section, newest first, with short user-facing
    bullets (Added / Changed / Fixed). Call out anything an existing install must do, e.g. re-run
-   `bunny setup`. If the notes will be published somewhere, set `PR_BUNNY_NOTES_URL` for the
+   `bunny setup`. The app shows these notes: the update popup (from `latest.json` `notes`) and
+   What's new after updating (built into the binary), parsed by `apps/app/src/shared/changelog.ts`.
+   So keep that shape exactly, and start each Added bullet with a `**Short title.**` (it becomes a
+   highlight card; the first three lead the popup). A release with only `### Fixed` gets a small
+   note instead of a dialog. The build refuses to run unless this version is the newest entry. If the notes will be published somewhere, set `PR_BUNNY_NOTES_URL` for the
    build so `latest.json` links to them. The About screen shows a "Release notes" link.
 
 4. **Keep the installer in step.** Run `bun apps/app/scripts/build.ts --check`. Update

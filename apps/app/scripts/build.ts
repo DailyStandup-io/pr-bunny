@@ -3,7 +3,8 @@
 // into one file per platform, laid out ready to upload as-is to https://prbunny.dev/releases/:
 //
 //   dist/latest                          the version number (what install.sh fetches first)
-//   dist/latest.json                     { version, name, notesUrl, publishedAt } (what the app's updater reads)
+//   dist/latest.json                     { version, name, notesUrl, publishedAt, notes } (what the app's updater reads;
+//                                        notes = the newest CHANGELOG.md entries, for the update popup)
 //   dist/install.sh                      the installer (also served at https://prbunny.dev/install.sh)
 //   dist/<version>/bunny-<os>-<arch>     binaries
 //   dist/<version>/bunny-<os>-<arch>.sha256
@@ -24,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
 import { GITHUB_REPO } from "../src/build-info";
+import { parseChangelog } from "../src/shared/changelog";
 
 const ROOT = resolve(import.meta.dir, "..");
 const INSTALLER = join(ROOT, "scripts", "install.sh");
@@ -122,7 +124,16 @@ await Bun.write(join(OUT, "manifest.json"), `${JSON.stringify(manifest, null, 2)
 await Bun.write(join(DIST, "install.sh"), Bun.file(INSTALLER));
 await Bun.write(join(DIST, "latest"), `${version}\n`);
 // Release notes are the GitHub Release body for this tag unless PR_BUNNY_NOTES_URL says otherwise.
-const release = { version, name: codename, notesUrl: process.env.PR_BUNNY_NOTES_URL ?? `https://github.com/${GITHUB_REPO}/releases/tag/v${version}`, publishedAt: new Date().toISOString() };
+// `notes` feeds the update popup (highlights, "+ 4 changes and 1 fix", skipped versions).
+const notes = parseChangelog(await Bun.file(join(ROOT, "..", "..", "CHANGELOG.md")).text());
+if (notes[0]?.version !== version) fail(`CHANGELOG.md's newest entry is ${notes[0]?.version ?? "missing"}, not ${version}. Add this release's notes first.`);
+const release = {
+  version,
+  name: codename,
+  notesUrl: process.env.PR_BUNNY_NOTES_URL ?? `https://github.com/${GITHUB_REPO}/releases/tag/v${version}`,
+  publishedAt: new Date().toISOString(),
+  notes: notes.slice(0, 10),
+};
 await Bun.write(join(DIST, "latest.json"), `${JSON.stringify(release, null, 2)}\n`);
 
 // ---------- smoke test (native target only) ----------

@@ -21,6 +21,7 @@ import { ReviewHome } from "./pages/ReviewHome";
 import { SettingsPage } from "./pages/Settings";
 import { SetupPage } from "./pages/Setup";
 import { StackPage } from "./pages/Stack";
+import { UpdateDialogs } from "./components/UpdateDialogs";
 import { Icon, type IconName } from "@pr-bunny/icons";
 
 /** Inbox icon: a dot while PRs wait on you that you haven't posted a review for, a check when none are assigned. */
@@ -210,6 +211,9 @@ function Shell() {
           <Bunny report={bunny} compact />
         </nav>
       )}
+
+      {/* The update popup and What's new. The Shell never renders during setup, so neither does this. */}
+      <UpdateDialogs />
     </div>
   );
 }

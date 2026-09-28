@@ -14,6 +14,7 @@ import { autoClearReviews, clearReviews, getHousekeeping, hideItems, listHidden,
 import { selfSources } from "./local";
 import { checkoutFor, completeSetup, pickFolder, resolveRepo, setupChecks, setupLinkCli, setupRepos, setupState } from "./onboarding";
 import { checkForUpdate, installUpdate, restartForUpdate, scheduleUpdateChecks, updateState } from "./update";
+import { markWhatsNewSeen, saveUpdatePrefs, whatsNewState } from "./whatsnew";
 import {
   decideStackFinding,
   editStackComment,
@@ -131,11 +132,15 @@ const server = Bun.serve<{ reviewId: number }>({
       },
     },
 
-    // ---------- updates (installing and restarting only from clicks in Settings) ----------
+    // ---------- updates (installing and restarting only from clicks: Settings › About or the update popup) ----------
     "/api/update": { GET: api(() => updateState()) },
     "/api/update/check": { POST: api(() => checkForUpdate()) },
     "/api/update/install": { POST: api(() => installUpdate()) },
     "/api/update/restart": { POST: api(() => restartForUpdate()) },
+    // The update popup and What's new (Settings › About).
+    "/api/whats-new": { GET: api(() => whatsNewState()) },
+    "/api/whats-new/seen": { POST: api(() => markWhatsNewSeen()) },
+    "/api/update/prefs": { POST: api(async (req) => (saveUpdatePrefs(await body(req)), whatsNewState())) },
 
     "/api/inbox": { GET: api(() => getInbox()) },
 

@@ -309,7 +309,7 @@ function Layers(props: { stack: StackDetail; onChange: (s: StackDetail) => void;
         ? { text: "Every layer is reviewed.", cta: "Submit", go: props.goSubmit }
         : !started && !tooBig
           ? { text: `${active.length} PRs, each reviewed against its own parent.`, cta: "Review all", go: () => act("run", () => api.stackRun(stack.id, "running")) }
-          : { text: "Open a layer to review it on its own, or start Review all.", cta: tooBig ? "Change the limit" : "Review all", go: tooBig ? () => navigate("/settings") : () => act("run", () => api.stackRun(stack.id, "running")) };
+          : { text: "Open a layer to review it on its own, or start Review all.", cta: tooBig ? "Change the limit" : "Review all", go: tooBig ? () => navigate("/settings#stacks") : () => act("run", () => api.stackRun(stack.id, "running")) };
 
   const feed = [
     ...current.flatMap((l) => (l.line ? [{ t: l.line.at, text: `#${l.pr}  ${l.line.text}` }] : [])),
@@ -429,7 +429,7 @@ function Layers(props: { stack: StackDetail; onChange: (s: StackDetail) => void;
             <p className="m-0 text-[13.5px] leading-[1.55] text-fg-2">
               It has {size} PRs, more than your limit of {stack.maxAll}. You can still open and review each layer.
             </p>
-            <button onClick={() => navigate("/settings")} className="mt-3 h-9 cursor-pointer rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium hover:bg-hover">
+            <button onClick={() => navigate("/settings#stacks")} className="mt-3 h-9 cursor-pointer rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium hover:bg-hover">
               Change the limit
             </button>
           </section>

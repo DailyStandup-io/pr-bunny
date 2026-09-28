@@ -1,15 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentInfo, Effort, ModelOption, Provider, Settings, Stage } from "../../shared/types";
-import { api, navigate, refreshAgentLabel, updates, useAsync, useLayout, useTheme, useUpdate, type ThemePref } from "../api";
+import { api, navigate, refreshAgentLabel, replaceHash, updatePrefs, updates, useAsync, useHash, useLayout, useTheme, useUpdate, useWhatsNew, type ThemePref } from "../api";
+import { fixesOnly } from "../../shared/changelog";
 import { Page } from "../components/Page";
 import { card, field, MaskIcon, Spinner, Sym, timeAgo } from "../components/ui";
 import { BUNNY_FACES } from "../components/Bunny";
 import { HousekeepingExtras } from "../components/Housekeeping";
 import { NotificationsSection } from "../components/Notifications";
-import claudeLogo from "../assets/claude.svg";
-// OpenAI's official Blossom (cdn.openai.com/brand), drawn in the text colour so it works in both themes.
-import openaiLogo from "../assets/openai.svg";
 import dailyStandupLogo from "@pr-bunny/brand/dailystandup.svg";
+import { Icon, type IconName } from "@pr-bunny/icons";
 
 const STAGES: Array<{ key: Stage; label: string; hint: string }> = [
   { key: "recon", label: "Overview", hint: "The quick scan you read first. A fast model is fine here." },
@@ -17,10 +16,31 @@ const STAGES: Array<{ key: Stage; label: string; hint: string }> = [
   { key: "qa", label: "Questions", hint: "Answers questions about a finding, continuing the review's context." },
 ];
 
-const LOGO: Record<Provider, string> = { claude: claudeLogo, codex: openaiLogo };
+const LOGO: Record<Provider, IconName> = { claude: "claude", codex: "chatGpt" };
+
+type Tab = "general" | "agent" | "notifications" | "review" | "stacks";
+const TABS: Array<{ key: Tab; label: string; icon: IconName }> = [
+  { key: "general", label: "General", icon: "settings" },
+  { key: "agent", label: "Agent", icon: "robotic" },
+  { key: "notifications", label: "Notifications", icon: "bell" },
+  { key: "review", label: "Review", icon: "chatEdit" },
+  { key: "stacks", label: "Stacks", icon: "layers" },
+];
+/** Which settings each tab edits, for its unsaved-changes dot. */
+const TAB_KEYS: Record<Tab, Array<keyof Settings>> = {
+  general: ["worktreeTtlHours"],
+  agent: ["provider", "models", "effort"],
+  notifications: ["notifications"],
+  review: ["dismissalMemory", "dismissalMemoryLimit", "stackContextDepth", "reviewMaxTurns", "reconMaxTurns"],
+  stacks: ["stackOrder", "stackConcurrency", "stackMaxAll", "stackIncludeDone"],
+};
+/** The tab a #fragment opens: a tab's own key, or #about (update alerts) on General. */
+const tabFor = (hash: string): Tab => (TABS.some((t) => t.key === hash) ? (hash as Tab) : "general");
 
 export function SettingsPage() {
   const { stickyBottom } = useLayout();
+  const hash = useHash();
+  const tab = tabFor(hash);
   const { data, error } = useAsync(api.settings, []);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [saved, setSaved] = useState<Settings | null>(null);
@@ -42,6 +62,12 @@ export function SettingsPage() {
   useEffect(() => {
     scan();
   }, []);
+
+  // Links to #about (update alerts) scroll to it once the page has loaded.
+  const loaded = Boolean(data);
+  useEffect(() => {
+    if (loaded && hash === "about") setTimeout(() => document.getElementById("about")?.scrollIntoView({ block: "start" }), 50);
+  }, [loaded, hash]);
 
   useEffect(() => {
     if (data) {
@@ -82,164 +108,172 @@ export function SettingsPage() {
   return (
     <div className="flex flex-1 flex-col">
       <Page title="Settings" flush>
-        <section className={`${card} overflow-hidden`}>
-          <div className="flex items-start gap-4 border-b border-line px-[22px] py-[18px]">
-            <div className="min-w-0 flex-1">
-              <h2 className="m-0 text-[15px] font-semibold">Agent</h2>
-              <p className="mt-[3px] mb-0 text-[13px] text-fg-3">The coding agent that runs reviews on this machine. Pick one you're signed in to.</p>
-            </div>
-            <button
-              onClick={scan}
-              disabled={scanning}
-              className="flex h-9 flex-none items-center gap-2 rounded-lg border border-line bg-transparent px-3 text-[13px] text-fg-2 enabled:cursor-pointer enabled:hover:bg-hover enabled:hover:text-fg"
-            >
-              {scanning ? <Spinner size={15} /> : <Sym name="refresh" />}
-              {scanning ? "Scanning" : "Scan again"}
-            </button>
-          </div>
-          {(["claude", "codex"] as const).map((key, i, keys) => {
-            const a = agents?.find((x) => x.key === key);
-            const selected = draft.provider === key;
-            const usable = !scanning && Boolean(a?.installed && a.signedIn);
-            const statusText = scanning || !a
-              ? "Checking sign-in…"
-              : !a.installed
-                ? "Not installed"
-                : a.signedIn
-                  ? `Signed in${a.account ? ` as ${a.account}` : ""}${a.plan ? ` · ${a.plan}` : ""}`
-                  : "Installed, not signed in";
-            const good = !scanning && a?.installed && a.signedIn;
-            return (
-              <button
-                key={key}
-                onClick={() => usable && !selected && pickAgent(key)}
-                disabled={!usable || selected}
-                aria-pressed={selected}
-                className={`flex w-full items-start gap-3.5 border-0 px-[22px] py-[18px] text-left text-fg ${usable && !selected ? "cursor-pointer" : "cursor-default"}`}
-                style={{ borderBottom: `1px solid ${i === keys.length - 1 ? "transparent" : "var(--line)"}`, background: selected ? "var(--accent-soft)" : "transparent" }}
-              >
-                <span
-                  className="mt-0.5 grid size-[18px] flex-none place-items-center rounded-full border-[1.5px]"
-                  style={{ borderColor: selected ? "var(--accent)" : "var(--line-strong)", opacity: usable || selected ? 1 : 0.45 }}
+        <SettingsTabs tab={tab} dirty={(k) => TAB_KEYS[k].some((x) => JSON.stringify(draft[x]) !== JSON.stringify(saved[x]))} />
+        {tab === "agent" && (
+          <>
+            <section className={`${card} overflow-hidden`}>
+              <div className="flex items-start gap-4 border-b border-line px-[22px] py-[18px]">
+                <div className="min-w-0 flex-1">
+                  <h2 className="m-0 text-[15px] font-semibold">Agent</h2>
+                  <p className="mt-[3px] mb-0 text-[13px] text-fg-3">The coding agent that runs reviews on this machine. Pick one you're signed in to.</p>
+                </div>
+                <button
+                  onClick={scan}
+                  disabled={scanning}
+                  className="flex h-9 flex-none items-center gap-2 rounded-lg border border-line bg-transparent px-3 text-[13px] text-fg-2 enabled:cursor-pointer enabled:hover:bg-hover enabled:hover:text-fg"
                 >
-                  <span className="size-2 rounded-full" style={{ background: selected ? "var(--accent)" : "transparent" }} />
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
-                  <span className="flex items-center gap-[7px] text-[14.5px] font-medium">
-                    {key === "codex" ? (
-                      <MaskIcon src={LOGO.codex} size={16} className="flex-none text-fg" />
-                    ) : (
-                      <img src={LOGO[key]} alt="" className="size-4 flex-none object-contain" />
-                    )}
-                    {data.providers[key].label}
-                  </span>
-                  <span className="truncate font-mono text-[12px] text-fg-3">
-                    {a?.installed ? `${a.path}${a.version ? ` · v${a.version}` : ""}` : scanning ? " " : "Not found on this machine"}
-                  </span>
-                  <span className="mt-[3px] flex items-center gap-1.5 text-[13px]" style={{ color: scanning ? "var(--text-3)" : good ? "var(--add)" : "var(--text-2)" }}>
-                    <Sym name={scanning ? "schedule" : good ? "check_circle" : "error"} size={16} fill />
-                    {statusText}
-                  </span>
-                  {!scanning && a && (!a.installed || !a.signedIn) && (
-                    <span className="mt-1.5 text-[13px] leading-normal text-fg-2">
-                      Run <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[12px] text-fg">{a.installed ? a.loginCmd : a.installCmd}</code>
-                      {!a.installed && (
-                        <>
-                          {" "}
-                          then <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[12px] text-fg">{a.loginCmd}</code>
-                        </>
-                      )}{" "}
-                      in a terminal, then scan again.
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </section>
-
-        <section className={card}>
-          <Header title="Models" sub={provider.hint} />
-          {STAGES.map((s) => (
-            <div key={s.key} className="flex flex-wrap gap-x-6 gap-y-3 border-b border-line px-[22px] py-[18px] last:border-b-0">
-              <div className="min-w-0 flex-[1_1_260px]">
-                <p className="m-0 text-[14.5px] font-medium">{s.label}</p>
-                <p className="mt-0.5 mb-0 text-[13px] leading-normal text-fg-3">{s.hint}</p>
+                  {scanning ? <Spinner size={15} /> : <Sym name="refresh" />}
+                  {scanning ? "Scanning" : "Scan again"}
+                </button>
               </div>
-              <div className="flex min-w-[240px] flex-[0_1_320px] flex-col gap-2">
-                <ModelPicker
-                  key={`${draft.provider}:${s.key}`}
-                  value={draft.models[s.key]}
-                  options={provider.models}
-                  placeholder={draft.provider === "codex" ? "e.g. gpt-5-codex" : "e.g. claude-opus-5-5"}
-                  onChange={(m) => set({ models: { ...draft.models, [s.key]: m } })}
-                />
-                <label className="flex items-center justify-between gap-3 text-[13px] text-fg-3">
-                  Effort
-                  <select
-                    value={draft.effort[s.key]}
-                    onChange={(e) => set({ effort: { ...draft.effort, [s.key]: e.target.value as Effort } })}
-                    className={`h-9 px-2.5 text-[13px] text-fg ${field}`}
+              {(["claude", "codex"] as const).map((key, i, keys) => {
+                const a = agents?.find((x) => x.key === key);
+                const selected = draft.provider === key;
+                const usable = !scanning && Boolean(a?.installed && a.signedIn);
+                const statusText = scanning || !a
+                  ? "Checking sign-in…"
+                  : !a.installed
+                    ? "Not installed"
+                    : a.signedIn
+                      ? `Signed in${a.account ? ` as ${a.account}` : ""}${a.plan ? ` · ${a.plan}` : ""}`
+                      : "Installed, not signed in";
+                const good = !scanning && a?.installed && a.signedIn;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => usable && !selected && pickAgent(key)}
+                    disabled={!usable || selected}
+                    aria-pressed={selected}
+                    className={`flex w-full items-start gap-3.5 border-0 px-[22px] py-[18px] text-left text-fg ${usable && !selected ? "cursor-pointer" : "cursor-default"}`}
+                    style={{ borderBottom: `1px solid ${i === keys.length - 1 ? "transparent" : "var(--line)"}`, background: selected ? "var(--accent-soft)" : "transparent" }}
                   >
-                    {provider.efforts.map((e) => (
-                      <option key={e.key} value={e.key}>
-                        {e.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    <span
+                      className="mt-0.5 grid size-[18px] flex-none place-items-center rounded-full border-[1.5px]"
+                      style={{ borderColor: selected ? "var(--accent)" : "var(--line-strong)", opacity: usable || selected ? 1 : 0.45 }}
+                    >
+                      <span className="size-2 rounded-full" style={{ background: selected ? "var(--accent)" : "transparent" }} />
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-[3px]">
+                      <span className="flex items-center gap-[7px] text-[14.5px] font-medium">
+                        <Icon name={LOGO[key]} size={17} className="flex-none" />
+                        {data.providers[key].label}
+                      </span>
+                      <span className="truncate font-mono text-[12px] text-fg-3">
+                        {a?.installed ? `${a.path}${a.version ? ` · v${a.version}` : ""}` : scanning ? " " : "Not found on this machine"}
+                      </span>
+                      <span className="mt-[3px] flex items-center gap-1.5 text-[13px]" style={{ color: scanning ? "var(--text-3)" : good ? "var(--add)" : "var(--text-2)" }}>
+                        <Sym name={scanning ? "schedule" : good ? "check_circle" : "error"} size={16} fill />
+                        {statusText}
+                      </span>
+                      {!scanning && a && (!a.installed || !a.signedIn) && (
+                        <span className="mt-1.5 text-[13px] leading-normal text-fg-2">
+                          Run <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[12px] text-fg">{a.installed ? a.loginCmd : a.installCmd}</code>
+                          {!a.installed && (
+                            <>
+                              {" "}
+                              then <code className="rounded bg-sunken px-1.5 py-0.5 font-mono text-[12px] text-fg">{a.loginCmd}</code>
+                            </>
+                          )}{" "}
+                          in a terminal, then scan again.
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </section>
+
+            <section className={card}>
+              <Header title="Models" sub={provider.hint} />
+              {STAGES.map((s) => (
+                <div key={s.key} className="flex flex-wrap gap-x-6 gap-y-3 border-b border-line px-[22px] py-[18px] last:border-b-0">
+                  <div className="min-w-0 flex-[1_1_260px]">
+                    <p className="m-0 text-[14.5px] font-medium">{s.label}</p>
+                    <p className="mt-0.5 mb-0 text-[13px] leading-normal text-fg-3">{s.hint}</p>
+                  </div>
+                  <div className="flex min-w-[240px] flex-[0_1_320px] flex-col gap-2">
+                    <ModelPicker
+                      key={`${draft.provider}:${s.key}`}
+                      value={draft.models[s.key]}
+                      options={provider.models}
+                      placeholder={draft.provider === "codex" ? "e.g. gpt-5-codex" : "e.g. claude-opus-5-5"}
+                      onChange={(m) => set({ models: { ...draft.models, [s.key]: m } })}
+                    />
+                    <label className="flex items-center justify-between gap-3 text-[13px] text-fg-3">
+                      Effort
+                      <select
+                        value={draft.effort[s.key]}
+                        onChange={(e) => set({ effort: { ...draft.effort, [s.key]: e.target.value as Effort } })}
+                        className={`h-9 px-2.5 text-[13px] text-fg ${field}`}
+                      >
+                        {provider.efforts.map((e) => (
+                          <option key={e.key} value={e.key}>
+                            {e.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </section>
+          </>
+        )}
+        {tab === "review" && (
+          <section className={card}>
+            <Header title="Review" sub="What goes into the deep review's prompt." />
+            <Row label="Learn from dismissals" hint="Include your past dismissals in this repo, so the same false positives stop coming back.">
+              <div className="flex items-center gap-3.5">
+                <Toggle checked={draft.dismissalMemory} onChange={(v) => set({ dismissalMemory: v })} />
+                <NumberInput value={draft.dismissalMemoryLimit} disabled={!draft.dismissalMemory} onChange={(n) => set({ dismissalMemoryLimit: n })} suffix="most recent" />
               </div>
-            </div>
-          ))}
-        </section>
+            </Row>
+            <Row label="Stack context" hint="How many PRs above and below in a stack to load descriptions for. The agent can still open any stack PR itself.">
+              <NumberInput value={draft.stackContextDepth} onChange={(n) => set({ stackContextDepth: n })} suffix="levels each way" />
+            </Row>
+            <Row label="Deep review turn limit" hint="Safety cap on tool calls in one deep review. Raise it if very large PRs stop early. Claude Code only.">
+              <NumberInput value={draft.reviewMaxTurns} onChange={(n) => set({ reviewMaxTurns: n })} suffix="turns" />
+            </Row>
+            <Row label="Overview turn limit" hint="How many tries the overview gets to hand back a complete answer. It reads no files, so a few is plenty. Claude Code only.">
+              <NumberInput value={draft.reconMaxTurns} onChange={(n) => set({ reconMaxTurns: n })} suffix="turns" />
+            </Row>
+          </section>
+        )}
+        {tab === "stacks" && (
+          <section className={card}>
+            <Header title="Stacks" sub="How Review all works through a stack of dependent PRs." />
+            <Row label="Review order" hint="Which end Review all starts from. Base first reviews each layer after the one it builds on.">
+              <Segmented value={draft.stackOrder} options={[["base", "Base first"], ["top", "Top first"]]} onChange={(v) => set({ stackOrder: v as "base" | "top" })} />
+            </Row>
+            <Row label="PRs at once" hint="How many deep reviews run in parallel during Review all. More is faster and uses more of your plan.">
+              <Segmented value={String(draft.stackConcurrency)} options={[["1", "1"], ["2", "2"], ["3", "3"]]} onChange={(v) => set({ stackConcurrency: Number(v) })} />
+            </Row>
+            <Row label="Review all limit" hint="Stacks with more PRs than this don't offer Review all. You can still review each layer.">
+              <NumberInput value={draft.stackMaxAll} onChange={(n) => set({ stackMaxAll: n })} suffix="PRs or fewer" />
+            </Row>
+            <Row label="Include approved and merged PRs" hint="Off leaves out layers that are already approved, merged, or reviewed by you. Turn on to review them again.">
+              <Toggle checked={draft.stackIncludeDone} onChange={(v) => set({ stackIncludeDone: v })} />
+            </Row>
+          </section>
+        )}
+        {tab === "notifications" && (
+  <NotificationsSection value={draft.notifications} onChange={(p) => set({ notifications: { ...draft.notifications, ...p } })} />
+        )}
+        {tab === "general" && (
+          <>
+            <section className={card}>
+              <Header title="Housekeeping" />
+              <Row label="Clean up checkouts after" hint="PR checkouts are deleted after this long with no activity, and right after you post. Asking a question later recreates one.">
+                <NumberInput value={draft.worktreeTtlHours} onChange={(n) => set({ worktreeTtlHours: n })} suffix="hours" />
+              </Row>
+              {/* Clearing finished reviews and the hidden list: saved on change, separate from the save bar. */}
+              <HousekeepingExtras />
+            </section>
 
-        <section className={card}>
-          <Header title="Review" sub="What goes into the deep review's prompt." />
-          <Row label="Learn from dismissals" hint="Include your past dismissals in this repo, so the same false positives stop coming back.">
-            <div className="flex items-center gap-3.5">
-              <Toggle checked={draft.dismissalMemory} onChange={(v) => set({ dismissalMemory: v })} />
-              <NumberInput value={draft.dismissalMemoryLimit} disabled={!draft.dismissalMemory} onChange={(n) => set({ dismissalMemoryLimit: n })} suffix="most recent" />
-            </div>
-          </Row>
-          <Row label="Stack context" hint="How many PRs above and below in a stack to load descriptions for. The agent can still open any stack PR itself.">
-            <NumberInput value={draft.stackContextDepth} onChange={(n) => set({ stackContextDepth: n })} suffix="levels each way" />
-          </Row>
-          <Row label="Deep review turn limit" hint="Safety cap on tool calls in one deep review. Raise it if very large PRs stop early. Claude Code only.">
-            <NumberInput value={draft.reviewMaxTurns} onChange={(n) => set({ reviewMaxTurns: n })} suffix="turns" />
-          </Row>
-          <Row label="Overview turn limit" hint="How many tries the overview gets to hand back a complete answer. It reads no files, so a few is plenty. Claude Code only.">
-            <NumberInput value={draft.reconMaxTurns} onChange={(n) => set({ reconMaxTurns: n })} suffix="turns" />
-          </Row>
-          <div className="border-t border-line px-[22px] pt-4">
-            <h3 className="m-0 text-[13px] font-semibold text-fg-3">Stacks</h3>
-          </div>
-          <Row label="Review order" hint="Which end Review all starts from. Base first reviews each layer after the one it builds on.">
-            <Segmented value={draft.stackOrder} options={[["base", "Base first"], ["top", "Top first"]]} onChange={(v) => set({ stackOrder: v as "base" | "top" })} />
-          </Row>
-          <Row label="PRs at once" hint="How many deep reviews run in parallel during Review all. More is faster and uses more of your plan.">
-            <Segmented value={String(draft.stackConcurrency)} options={[["1", "1"], ["2", "2"], ["3", "3"]]} onChange={(v) => set({ stackConcurrency: Number(v) })} />
-          </Row>
-          <Row label="Review all limit" hint="Stacks with more PRs than this don't offer Review all. You can still review each layer.">
-            <NumberInput value={draft.stackMaxAll} onChange={(n) => set({ stackMaxAll: n })} suffix="PRs or fewer" />
-          </Row>
-          <Row label="Include approved and merged PRs" hint="Off leaves out layers that are already approved, merged, or reviewed by you. Turn on to review them again.">
-            <Toggle checked={draft.stackIncludeDone} onChange={(v) => set({ stackIncludeDone: v })} />
-          </Row>
-        </section>
-
-        <NotificationsSection value={draft.notifications} onChange={(p) => set({ notifications: { ...draft.notifications, ...p } })} />
-
-        <section className={card}>
-          <Header title="Housekeeping" />
-          <Row label="Clean up checkouts after" hint="PR checkouts are deleted after this long with no activity, and right after you post. Asking a question later recreates one.">
-            <NumberInput value={draft.worktreeTtlHours} onChange={(n) => set({ worktreeTtlHours: n })} suffix="hours" />
-          </Row>
-          {/* Clearing finished reviews and the hidden list: saved on change, separate from the save bar. */}
-          <HousekeepingExtras />
-        </section>
-
-        <Appearance />
-        <About />
+            <Appearance />
+            <About />
+          </>
+        )}
 
         <SaveBar
           bottom={stickyBottom}
@@ -252,6 +286,35 @@ export function SettingsPage() {
           onSave={() => run(() => api.saveSettings(draft), "Saved")}
         />
       </Page>
+    </div>
+  );
+}
+
+/** The section tabs under the title. A dot marks a tab with unsaved changes; Save covers them all. */
+function SettingsTabs({ tab, dirty }: { tab: Tab; dirty: (t: Tab) => boolean }) {
+  return (
+    <div role="tablist" aria-label="Settings sections" className="-mt-2.5 flex gap-0.5 overflow-x-auto border-b border-line [scrollbar-width:none]">
+      {TABS.map((t) => {
+        const on = t.key === tab;
+        return (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={on}
+            onClick={() => {
+              replaceHash(t.key);
+              window.scrollTo({ top: 0 });
+            }}
+            className={`flex h-[46px] flex-none cursor-pointer items-center gap-2 border-0 bg-transparent px-3.5 text-[14px] whitespace-nowrap hover:text-fg ${
+              on ? "font-semibold text-fg shadow-[inset_0_-2px_0_var(--text)]" : "font-medium text-fg-3"
+            }`}
+          >
+            <Icon name={t.icon} size={19} className="flex-none" />
+            {t.label}
+            {dirty(t.key) && <span aria-label="Unsaved changes" className="size-[7px] flex-none rounded-full bg-accent" />}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -387,11 +450,12 @@ function ModelPicker({ value, options, placeholder, onChange }: { value: string;
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
       className={`relative h-[26px] w-11 flex-none cursor-pointer rounded-full border-0 ${checked ? "bg-accent" : "bg-line-strong"}`}
     >
@@ -523,6 +587,7 @@ function About() {
           </div>
         )}
       </div>
+      <UpdateSwitches />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line bg-sunken px-[22px] py-3">
         <MaskIcon src={dailyStandupLogo} size={18} className="flex-none text-fg-2" />
         <p className="m-0 min-w-0 flex-1 text-[13px] text-fg-3">
@@ -538,6 +603,69 @@ function About() {
         </a>
       </div>
     </section>
+  );
+}
+
+/** About › the update popup and What's new: two switches (saved right away) and the notes. */
+function UpdateSwitches() {
+  const w = useWhatsNew();
+  const u = useUpdate();
+  if (!w) return null;
+  const { prefs } = w;
+  const pending = u?.status === "available" || u?.status === "downloading" || u?.status === "ready" ? u.latest?.version : undefined;
+  const hidden = prefs.updatePopup && pending && prefs.dismissedUpdate === pending;
+  const popHint = !prefs.updatePopup
+    ? "Off. The bunny still mentions new versions."
+    : hidden
+      ? `Hidden for ${pending}. It'll ask again for the next version.`
+      : "A popup once per version. Not now hides it until the next one.";
+  // From source there's no version of our own in the changelog; show the newest.
+  const mine = w.notes.find((n) => n.version === w.current.version) ?? w.notes[0];
+  const date = mine?.date ? new Date(`${mine.date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : null;
+  const fixes = mine && fixesOnly(mine) ? `${mine.fixed.length} ${mine.fixed.length === 1 ? "fix" : "fixes"}` : null;
+  const row = "flex items-center gap-4 px-[22px] py-2";
+  return (
+    <div className="border-t border-line pt-2 pb-2.5">
+      <div className={row}>
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-[14px]">Tell me when an update is out</p>
+          <p className="mt-px mb-0 text-[12.5px] text-pretty text-fg-3">
+            {popHint}
+            {hidden && (
+              <>
+                {" "}
+                <button onClick={updatePrefs.showPopupAgain} className="cursor-pointer border-0 bg-transparent p-0 text-[12.5px] font-medium text-accent hover:underline">
+                  Show it again
+                </button>
+              </>
+            )}
+          </p>
+        </div>
+        <Toggle checked={prefs.updatePopup} onChange={(v) => updatePrefs.save({ updatePopup: v })} label="Tell me when an update is out" />
+      </div>
+      <div className={row}>
+        <div className="min-w-0 flex-1">
+          <p className="m-0 text-[14px]">Show what's new after updating</p>
+          <p className="mt-px mb-0 text-[12.5px] text-pretty text-fg-3">Once, the first time you open a new version. Fix-only releases get a small note.</p>
+        </div>
+        <Toggle checked={prefs.whatsNew} onChange={(v) => updatePrefs.save({ whatsNew: v })} label="Show what's new after updating" />
+      </div>
+      {mine && (
+        <div className={row}>
+          <div className="min-w-0 flex-1">
+            <p className="m-0 text-[14px]">What's new in {mine.version}{mine.name ? ` “${mine.name}”` : ""}</p>
+            <p className="mt-px mb-0 text-[12.5px] text-fg-3">{[date && `Released ${date}`, fixes].filter(Boolean).join(" · ")}</p>
+          </div>
+          <button
+            onClick={() => updatePrefs.openNotes([mine.version])}
+            className="flex h-9 flex-none cursor-pointer items-center gap-[7px] rounded-lg border border-line bg-transparent pr-3 pl-2.5 text-[13px] whitespace-nowrap text-fg-2 hover:bg-hover hover:text-fg"
+          >
+            <Sym name="auto_awesome" size={17} />
+            Read the notes
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
