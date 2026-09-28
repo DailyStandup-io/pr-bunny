@@ -55,6 +55,7 @@ export function readOnlyTools(worktree: string) {
 export async function ensureWorktree(row: ReviewRow): Promise<string> {
   if (row.worktree_path && existsSync(row.worktree_path)) return row.worktree_path;
   if (isLocalSelf(row)) {
+    if (!row.head_sha) throw new Error("This self-review never finished copying your branch. Start it again.");
     // The snapshot commit lives in our clone, so the checkout can be rebuilt without the user's repo.
     const path = await worktreeAt({ reviewId: row.id, owner: row.owner, repo: row.repo, sha: row.head_sha });
     db.run("UPDATE reviews SET worktree_path = ? WHERE id = ?", [path, row.id]);
