@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0 “Jicama” — 2026-09-28
+
+### Added
+- **Update popup.** When a new version is out, PR Bunny asks once, when you open it or come back
+  to it, and updates in place: download, restart, done. Not now hides it until the next version;
+  the bunny and Settings › About still say an update is out.
+- **What's new after updating.** The first time you open a new version you see what changed,
+  including every release you skipped. Releases with only fixes get a small note by the bunny.
+- **Settings in tabs.** General, Agent, Notifications, Review and Stacks, with a dot on any tab
+  that has unsaved changes. Stacks have their own section now.
+
+### Changed
+- Settings › About has switches for the update popup and What's new, and Read the notes to open
+  them again.
+- Agent and settings icons are drawn from the same icon set as the rest of the app.
+
 ## 0.4.1 “Iceberg” — 2026-09-28
 
 ### Fixed
