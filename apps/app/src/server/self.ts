@@ -93,28 +93,38 @@ export async function startSelfReview(input: StartSelf): Promise<{ id: number; r
   const id = insertReview({ owner, repo: repoName, number: 0 }, placeholder, "recon_running");
   db.run("UPDATE reviews SET mode = 'self', local_path = ?, include_dirty = ? WHERE id = ?", [root, input.includeDirty === false ? 0 : 1, id]);
 
-  (async () => {
-    const progress = (text: string) => emit({ type: "progress", reviewId: id, runKind: "recon", text, at: Date.now() });
-    const snap = await prepareSelfWorktree(
-      { reviewId: id, owner, repo: repoName, localPath: root, branch: name, base, includeDirty: input.includeDirty !== false },
-      progress,
-    );
-    const { diff, files } = await diffWithStats(snap.path, snap.mergeBase);
-    if (!files.length) throw new Error(`${name} has no changes against ${base}.`);
-    const commits = await commitLog(snap.path, snap.mergeBase, snap.branchSha).catch(() => []);
-    // Title: the only commit's subject, else the branch name.
-    const title = commits.length === 1 ? commits[0]!.replace(/^\w+ /, "") : name;
-    db.run(
-      `UPDATE reviews SET title = ?, head_sha = ?, branch_sha = ?, merge_base = ?, worktree_path = ?, files_json = ?, dirty_files = ?,
-              additions = ?, deletions = ?, changed_files = ? WHERE id = ?`,
-      [title, snap.headSha, snap.branchSha, snap.mergeBase, snap.path, JSON.stringify(files), snap.dirtyFiles,
-       files.reduce((n, f) => n + f.additions, 0), files.reduce((n, f) => n + f.deletions, 0), files.length, id],
-    );
-    const row = getRow(id)!;
-    const body = [...commits.map((c) => `- ${c}`), snap.dirtyFiles ? `- (plus ${snap.dirtyFiles} uncommitted file(s))` : ""].filter(Boolean).join("\n");
-    await runRecon(id, { owner, repo: repoName, number: 0 }, localPrView(row, body), { diff });
-  })().catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
+  snapshotAndScan(id).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
   return { id, reused: false };
+}
+
+/**
+ * Snapshots a local self-review's branch into our clone, then runs its overview. Until the
+ * snapshot lands the row has no `head_sha`, so a retry after a failed or interrupted snapshot
+ * (e.g. a slow first clone cut off by a restart) must come back through here, not straight to recon.
+ */
+export async function snapshotAndScan(id: number) {
+  const r = getRow(id);
+  if (!r) throw new Error("Not found");
+  if (!r.local_path || !existsSync(r.local_path)) throw new Error(`Your checkout at ${r.local_path} isn't there any more.`);
+  const progress = (text: string) => emit({ type: "progress", reviewId: id, runKind: "recon", text, at: Date.now() });
+  const snap = await prepareSelfWorktree(
+    { reviewId: id, owner: r.owner, repo: r.repo, localPath: r.local_path, branch: r.head_ref, base: r.base_ref, includeDirty: Boolean(r.include_dirty) },
+    progress,
+  );
+  const { diff, files } = await diffWithStats(snap.path, snap.mergeBase);
+  if (!files.length) throw new Error(`${r.head_ref} has no changes against ${r.base_ref}.`);
+  const commits = await commitLog(snap.path, snap.mergeBase, snap.branchSha).catch(() => []);
+  // Title: the only commit's subject, else the branch name.
+  const title = commits.length === 1 ? commits[0]!.replace(/^\w+ /, "") : r.head_ref;
+  db.run(
+    `UPDATE reviews SET title = ?, head_sha = ?, branch_sha = ?, merge_base = ?, worktree_path = ?, files_json = ?, dirty_files = ?,
+            additions = ?, deletions = ?, changed_files = ? WHERE id = ?`,
+    [title, snap.headSha, snap.branchSha, snap.mergeBase, snap.path, JSON.stringify(files), snap.dirtyFiles,
+     files.reduce((n, f) => n + f.additions, 0), files.reduce((n, f) => n + f.deletions, 0), files.length, id],
+  );
+  const row = getRow(id)!;
+  const body = [...commits.map((c) => `- ${c}`), snap.dirtyFiles ? `- (plus ${snap.dirtyFiles} uncommitted file(s))` : ""].filter(Boolean).join("\n");
+  await runRecon(id, { owner: r.owner, repo: r.repo, number: 0 }, localPrView(row, body), { diff });
 }
 
 /** The self-review `rp review --rerun` should re-run: the latest one for this checkout's branch. */

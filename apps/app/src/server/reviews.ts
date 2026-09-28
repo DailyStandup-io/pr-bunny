@@ -422,9 +422,14 @@ export async function retryRecon(id: number) {
   if (!row) throw new Error("Not found");
   if (isLocalSelf(row)) {
     setPhase(id, "recon_running");
-    runRecon(id, refOf(row), localPrView(row, ""), { diff: row.diff_text ?? "" }).catch((e) =>
-      setPhase(id, "failed", e instanceof Error ? e.message : String(e)),
-    );
+    const fail = (e: unknown) => setPhase(id, "failed", e instanceof Error ? e.message : String(e));
+    // No snapshot yet (it failed or was interrupted): take it now, or there's nothing to scan or check out.
+    if (!row.head_sha || row.diff_text == null) {
+      const { snapshotAndScan } = await import("./self"); // self.ts imports this module
+      snapshotAndScan(id).catch(fail);
+      return;
+    }
+    runRecon(id, refOf(row), localPrView(row, ""), { diff: row.diff_text }).catch(fail);
     return;
   }
   const pr = await prView(refOf(row));
