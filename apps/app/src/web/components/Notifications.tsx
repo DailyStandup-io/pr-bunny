@@ -192,11 +192,6 @@ export function NotificationsSection({ value, onChange }: { value: NotificationS
   // The repos in the switcher are offered as chips for "Chosen repos".
   const inbox = useAsync(api.inbox, []);
   const repoOptions = inbox.data?.repos.map((r) => r.name) ?? [];
-  // Links from the bell and desktop alerts land on #notifications or #about.
-  useEffect(() => {
-    const id = location.hash.slice(1);
-    if (id) setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: "start" }), 50);
-  }, []);
   const browser = browserName();
   const [sent, setSent] = useState(false);
   const s = shown(perm, value.desktop);

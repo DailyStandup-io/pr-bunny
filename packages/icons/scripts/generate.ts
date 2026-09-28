@@ -30,6 +30,12 @@ if (import.meta.main) {
     sun: ["Sun03Icon", null],
     bell: ["Notification01Icon", null],
     bellOff: ["NotificationOff01Icon", null],
+    // Settings tabs and the agent picker.
+    robotic: ["RoboticIcon", null],
+    chatEdit: ["ChatEditIcon", null],
+    layers: ["Layers01Icon", null],
+    claude: ["ClaudeIcon", null],
+    chatGpt: ["ChatGptIcon", null],
   };
 
   const freeNames = [...new Set(Object.values(ICONS).map(([f]) => f))];

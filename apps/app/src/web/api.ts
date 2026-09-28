@@ -375,6 +375,27 @@ export function navigate(path: string) {
   listeners.forEach((l) => l());
 }
 
+/** The URL's #fragment without the #, e.g. "notifications" (Settings uses it for its tabs). */
+export function useHash(): string {
+  return useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      window.addEventListener("hashchange", cb);
+      return () => {
+        listeners.delete(cb);
+        window.removeEventListener("hashchange", cb);
+      };
+    },
+    () => location.hash.slice(1),
+  );
+}
+
+/** Changes the #fragment in place (no new history entry). */
+export function replaceHash(hash: string) {
+  history.replaceState(null, "", `${location.pathname}${location.search}${hash ? `#${hash}` : ""}`);
+  listeners.forEach((l) => l());
+}
+
 export function usePath(): string {
   return useSyncExternalStore(
     (cb) => {
