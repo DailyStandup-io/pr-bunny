@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 “Iceberg” — 2026-09-28
+
+### Fixed
+- **Self-review failing with `git worktree add … fatal: invalid reference`.** If copying your
+  branch was cut off the first time (for example, the app restarted during a slow first clone of a
+  big repo), Retry ran the overview without it and the deep review then failed. Retry, Resume and
+  Start again now copy the branch first. A review that already failed this way says so; start the
+  self-review of that branch again.
+
 ## 0.4.0 “Hay” — 2026-09-26
 
 ### Added
