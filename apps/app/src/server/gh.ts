@@ -58,8 +58,14 @@ export function parsePrRef(input: string, defaultRepo?: string): PrRef {
   throw new Error(`Couldn't understand "${s}". Use a PR URL, owner/repo#123, or a number.`);
 }
 
+/**
+ * `gh` on the PATH as it is now. Bun's shell looks bare commands up on the PATH the process started
+ * with, so a PATH set at runtime (bunny setup, the tests' fake gh) would otherwise be ignored.
+ */
+export const ghBin = () => Bun.which("gh", { PATH: process.env.PATH ?? "" }) ?? "gh";
+
 export async function ghJson<T>(args: string[]): Promise<T> {
-  const res = await $`gh ${args}`.quiet().nothrow();
+  const res = await $`${ghBin()} ${args}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`gh ${args.slice(0, 3).join(" ")} failed: ${res.stderr.toString().trim()}`);
   return JSON.parse(res.stdout.toString()) as T;
 }
@@ -78,7 +84,7 @@ export async function prView({ owner, repo, number }: PrRef): Promise<PrView> {
 }
 
 export async function prDiff({ owner, repo, number }: PrRef): Promise<string> {
-  const res = await $`gh pr diff ${number} -R ${`${owner}/${repo}`}`.quiet().nothrow();
+  const res = await $`${ghBin()} pr diff ${number} -R ${`${owner}/${repo}`}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`gh pr diff failed: ${res.stderr.toString().trim()}`);
   return res.stdout.toString();
 }
@@ -144,7 +150,7 @@ export async function reviewRequests(prs: Array<{ repo: string; number: number }
           createdAt actor { login } requestedReviewer { ... on User { login } ... on Team { slug } } } } } } }`;
     })
     .join("\n");
-  const res = await $`gh api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
+  const res = await $`${ghBin()} api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
   let data: Record<string, any> = {};
   try {
     data = JSON.parse(res.stdout.toString()).data ?? {};
@@ -170,7 +176,7 @@ export async function openPrCounts(repos: string[]): Promise<Record<string, numb
     })
     .join("\n");
   // Partial errors (e.g. a deleted repo) still return data for the rest, so don't fail on exit code.
-  const res = await $`gh api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
+  const res = await $`${ghBin()} api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
   let data: Record<string, any> = {};
   try {
     data = JSON.parse(res.stdout.toString()).data ?? {};
@@ -196,7 +202,7 @@ export async function recentCommitters(repo: string, path: string): Promise<stri
 
 /** The branch's tip on GitHub, or null if it hasn't been pushed. */
 export async function remoteBranchSha(repo: string, branch: string): Promise<string | null> {
-  const res = await $`gh api ${`repos/${repo}/branches/${encodeURIComponent(branch)}`} --jq .commit.sha`.quiet().nothrow();
+  const res = await $`${ghBin()} api ${`repos/${repo}/branches/${encodeURIComponent(branch)}`} --jq .commit.sha`.quiet().nothrow();
   return res.exitCode === 0 ? res.stdout.toString().trim() || null : null;
 }
 
@@ -234,7 +240,7 @@ export async function myPrReviews(): Promise<MyPrReview[]> {
   const query = `query { viewer { login pullRequests(states: OPEN, first: 30, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
     number title url repository { nameWithOwner }
     reviews(last: 10) { nodes { id state submittedAt author { login } comments { totalCount } } } } } } }`;
-  const res = await $`gh api graphql -f ${`query=${query}`}`.quiet().nothrow();
+  const res = await $`${ghBin()} api graphql -f ${`query=${query}`}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`gh api graphql failed: ${res.stderr.toString().trim()}`);
   const viewerData = JSON.parse(res.stdout.toString()).data?.viewer;
   const me = String(viewerData?.login ?? "").toLowerCase();
@@ -269,7 +275,7 @@ export async function prHeads(prs: Array<{ repo: string; number: number }>): Pro
       return `p${i}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${Math.trunc(p.number)}) { headRefOid state title } }`;
     })
     .join("\n");
-  const res = await $`gh api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
+  const res = await $`${ghBin()} api graphql -f ${`query=query { ${fields} }`}`.quiet().nothrow();
   let data: Record<string, any> = {};
   try {
     data = JSON.parse(res.stdout.toString()).data ?? {};
@@ -353,7 +359,7 @@ export async function postReview({ owner, repo, number }: PrRef, payload: Review
 export async function createPr(repo: string, opts: { head: string; base: string; reviewers: string[] }): Promise<number> {
   const args = ["pr", "create", "-R", repo, "--head", opts.head, "--base", opts.base, "--fill"];
   for (const r of opts.reviewers) args.push("--reviewer", r.replace(/^@/, ""));
-  const res = await $`gh ${args}`.quiet().nothrow();
+  const res = await $`${ghBin()} ${args}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`gh pr create failed: ${res.stderr.toString().trim()}`);
   const n = res.stdout.toString().match(/\/pull\/(\d+)/)?.[1];
   if (!n) throw new Error("gh pr create didn't return a PR URL");
@@ -364,13 +370,13 @@ export async function addReviewers(repo: string, number: number, reviewers: stri
   if (!reviewers.length) return;
   const args = ["pr", "edit", String(number), "-R", repo];
   for (const r of reviewers) args.push("--add-reviewer", r.replace(/^@/, ""));
-  const res = await $`gh ${args}`.quiet().nothrow();
+  const res = await $`${ghBin()} ${args}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`Adding reviewers failed: ${res.stderr.toString().trim()}`);
 }
 
 export async function approvePr({ owner, repo, number }: PrRef, body?: string): Promise<void> {
   const args = ["pr", "review", String(number), "-R", `${owner}/${repo}`, "--approve"];
   if (body?.trim()) args.push("--body", body.trim());
-  const res = await $`gh ${args}`.quiet().nothrow();
+  const res = await $`${ghBin()} ${args}`.quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`Approve failed: ${res.stderr.toString().trim()}`);
 }

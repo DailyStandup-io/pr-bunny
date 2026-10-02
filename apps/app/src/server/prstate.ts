@@ -7,7 +7,7 @@ import type { MergeMethod, SelfPr, SelfPrCheck, SelfPrReviewState } from "../sha
 import { snapshotOf } from "../shared/pr";
 import { DATA_DIR } from "./config";
 import { db } from "./db/db";
-import { ghJson, remoteBranchSha, viewer } from "./gh";
+import { ghBin, ghJson, remoteBranchSha, viewer } from "./gh";
 import { emit } from "./live";
 import { getRow, type ReviewRow } from "./reviews";
 
@@ -195,11 +195,11 @@ export async function mergePr(reviewId: number, opts: { method: MergeMethod; del
   if (!pr.methods.includes(opts.method)) throw new Error(`${pr.url.split("/pull/")[0]!.replace("https://github.com/", "")} doesn't allow that merge method.`);
   if (opts.headSha && opts.headSha !== pr.headSha) throw new Error(`New commits were pushed to ${pr.head} since this page loaded. Check them, then merge again.`);
   const repo = repoOf(row);
-  const res = await $`gh pr merge ${String(pr.number)} -R ${repo} ${`--${opts.method}`} --match-head-commit ${pr.headSha}`.cwd(DATA_DIR).quiet().nothrow();
+  const res = await $`${ghBin()} pr merge ${String(pr.number)} -R ${repo} ${`--${opts.method}`} --match-head-commit ${pr.headSha}`.cwd(DATA_DIR).quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`Merge failed: ${res.stderr.toString().trim() || res.stdout.toString().trim()}`);
   if (opts.deleteBranch && !pr.crossRepo) {
     // GitHub may already have deleted it (the repo's "automatically delete head branches").
-    await $`gh api -X DELETE ${`repos/${repo}/git/refs/heads/${pr.head}`}`.cwd(DATA_DIR).quiet().nothrow();
+    await $`${ghBin()} api -X DELETE ${`repos/${repo}/git/refs/heads/${pr.head}`}`.cwd(DATA_DIR).quiet().nothrow();
   }
   // GitHub takes a moment to report the merge.
   let after = pr;
@@ -216,7 +216,7 @@ export async function mergePr(reviewId: number, opts: { method: MergeMethod; del
 export async function markReady(reviewId: number): Promise<SelfPr> {
   const { row, pr } = await mine(reviewId);
   if (!pr.draft) return pr;
-  const res = await $`gh pr ready ${String(pr.number)} -R ${repoOf(row)}`.cwd(DATA_DIR).quiet().nothrow();
+  const res = await $`${ghBin()} pr ready ${String(pr.number)} -R ${repoOf(row)}`.cwd(DATA_DIR).quiet().nothrow();
   if (res.exitCode !== 0) throw new Error(`Marking it ready failed: ${res.stderr.toString().trim()}`);
   const after = await fetchPr(getRow(reviewId)!, pr.number);
   remember(getRow(reviewId)!, after);
