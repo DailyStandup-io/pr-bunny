@@ -5,6 +5,8 @@
 	# Installing the local CA needs sudo; do it once by hand with `caddy trust`.
 	skip_install_trust
 	admin localhost:2020
+	# 443 unless `bunny setup` picked another port because something else holds it (service.json).
+	https_port {$PR_BUNNY_HTTPS_PORT:443}
 }
 
 {$PR_BUNNY_DOMAIN:prbunny.localhost} {

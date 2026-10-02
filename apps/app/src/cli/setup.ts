@@ -3,12 +3,13 @@
 //   bunny setup --yes        don't ask (sudo will still prompt for your password)
 //   bunny setup --check      report what's done and what's missing; change nothing
 //   bunny setup --https      also serve at https://prbunny.localhost (Caddy + sudo once); --no-https turns it off
+//   bunny setup --https-port 4443   serve HTTPS on another port (when something else holds 443)
 //
 // Set PR_BUNNY_DOMAIN to use a hostname other than prbunny.localhost.
 import { $ } from "bun";
 import { COMPILED, CODENAME, VERSION } from "../build-info";
 import { CLI_LINK, CLI_NAME, CLI_TARGET, cliInfo, linkCli, removeLegacyLinks } from "../server/cli";
-import { DATA_DIR, DOMAIN, PORT, publicUrl, saveServiceConfig, serviceConfig } from "../server/config";
+import { DATA_DIR, DOMAIN, PORT, httpsHost, publicUrl, saveServiceConfig, serviceConfig } from "../server/config";
 import { APP_LABEL, CADDY_LABEL, LEGACY_LABELS, PATH, install as installService } from "./service";
 import { ask as askTty, c, detail, header, icons, interactive, line, note, section, spinner, sudoUpfront, task } from "./ui";
 
@@ -17,6 +18,23 @@ const CA_NAME = "Caddy Local Authority";
 /** Homebrew installs without first updating itself: that can sit silently for minutes and looks frozen. */
 const BREW_ENV = { HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_ENV_HINTS: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" };
 const tilde = (p: string) => p.replace(process.env.HOME ?? "", "~");
+/** Tried in order when another program holds the HTTPS port. */
+const ALT_HTTPS_PORTS = [4443, 4444, 4445, 8444, 9443];
+
+/**
+ * Who's listening on a TCP port, as "name (pid n)", ignoring Caddy (ours, or Homebrew's, checked on its own).
+ * netstat rather than lsof: lsof can't see root and system-extension listeners (Tailscale's) without sudo.
+ */
+async function portHolders(port: number): Promise<string[]> {
+  const out = (await $`netstat -anv -p tcp`.quiet().nothrow()).stdout.toString();
+  const holders = new Set<string>();
+  for (const l of out.split("\n")) {
+    const m = l.match(/^tcp[46]*\s+\d+\s+\d+\s+(\S+)\s+\S+\s+LISTEN\b.*?\s([^\s:]+):(\d+)\s/);
+    if (!m || !m[1]!.endsWith(`.${port}`) || m[2] === "caddy") continue;
+    holders.add(`${m[2]} (pid ${m[3]})`);
+  }
+  return [...holders];
+}
 
 export async function setup(argv: string[]) {
   const args = new Set(argv);
@@ -95,16 +113,30 @@ export async function setup(argv: string[]) {
 
   // HTTPS is optional: http://127.0.0.1:4477 works with no Caddy and no sudo.
   section("Address");
-  let https = serviceConfig().https;
+  let { https, httpsPort } = serviceConfig();
+  const portArg = argv.indexOf("--https-port");
+  if (portArg >= 0) {
+    const p = Number(argv[portArg + 1]);
+    if (!Number.isInteger(p) || p <= 0 || p >= 65536) {
+      line(icons.bad, `--https-port needs a port number, e.g. --https-port 4443`);
+      process.exit(1);
+    }
+    httpsPort = p;
+    https = true;
+  }
   if (args.has("--https")) https = true;
   else if (args.has("--no-https")) https = false;
   else if (!CHECK) {
-    detail(`PR Bunny runs at http://127.0.0.1:${PORT}. It can also be https://${DOMAIN},`);
+    detail(`PR Bunny runs at http://127.0.0.1:${PORT}. It can also be https://${httpsHost(httpsPort)},`);
     detail("which installs Caddy and needs sudo once (a hosts entry and a trusted local certificate).");
-    https = ask(`Serve at https://${DOMAIN} too?`, https);
+    https = ask(`Serve at https://${httpsHost(httpsPort)} too?`, https);
   }
-  if (!CHECK) saveServiceConfig({ https });
-  line(icons.ok, https ? `https://${DOMAIN}` : `http://127.0.0.1:${PORT}`, https ? undefined : `bunny setup --https for https://${DOMAIN}`);
+  if (!CHECK) saveServiceConfig({ https, httpsPort });
+  line(
+    icons.ok,
+    https ? `https://${httpsHost(httpsPort)}` : `http://127.0.0.1:${PORT}`,
+    https ? undefined : `bunny setup --https for https://${DOMAIN}`,
+  );
 
   const brewCaddyActive = async () => {
     const out = (await $`brew services info caddy --json`.env({ ...process.env, ...BREW_ENV }).quiet().nothrow()).stdout.toString();
@@ -138,6 +170,28 @@ export async function setup(argv: string[]) {
       async () => !has("caddy") || !(await brewCaddyActive()),
       async () => ask("Stop Homebrew's Caddy service?") && task("Stopping brew services caddy", ["brew", "services", "stop", "caddy"], BREW_ENV),
       "brew services stop caddy",
+    );
+    // Caddy can't share the port: macOS only lets it bind 443 on every address, and anything already
+    // there (Tailscale Serve/Funnel, Docker, another proxy) wins. Move to a free port rather than crash-loop.
+    let holders: string[] = [];
+    await ensure(
+      "Caddy's HTTPS port is free",
+      async () => (holders = await portHolders(httpsPort)).length === 0,
+      async () => {
+        note(`Port ${httpsPort} is in use by ${holders.join(", ")}.`);
+        let alt: number | undefined;
+        for (const p of ALT_HTTPS_PORTS) {
+          if (p !== httpsPort && (await portHolders(p)).length === 0) {
+            alt = p;
+            break;
+          }
+        }
+        if (!alt || !ask(`Serve at https://${httpsHost(alt)} instead?`)) return false;
+        httpsPort = alt;
+        saveServiceConfig({ https, httpsPort });
+        return true;
+      },
+      `free port ${httpsPort}, or bunny setup --https-port 4443`,
     );
   }
 

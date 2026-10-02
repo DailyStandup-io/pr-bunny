@@ -4,7 +4,7 @@ import type { BunRequest, Server } from "bun";
 import type { ReviewEvent } from "../shared/types";
 import index from "../web/index.html";
 import { approve, ask, askPr, buildSubmission, decide, editComment, startRereview, stats, status, submit } from "./actions";
-import { DOMAIN, HOST, PORT, publicUrl } from "./config";
+import { DOMAIN, HOST, PORT, httpsHost, publicUrl } from "./config";
 import { CODENAME, VERSION } from "../build-info";
 import { cleanupWorktrees } from "./cleanup";
 import { detectAgents } from "./agents";
@@ -69,7 +69,7 @@ setInterval(runCleanup, 60 * 60 * 1000);
 const json = (data: unknown, status = 200) => Response.json(data, { status });
 const fail = (e: unknown, status = 400) => json({ error: e instanceof Error ? e.message : String(e) }, status);
 
-const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, DOMAIN]);
+const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, DOMAIN, httpsHost()]);
 
 /**
  * Blocks other websites from driving this server: a foreign Host header means DNS rebinding,
