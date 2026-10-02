@@ -18,7 +18,7 @@ import { agentName, runAgent } from "./agents";
 import { buildSubmission, startRereview, submit } from "./actions";
 import { db } from "./db/db";
 import { ensureWorktree, readOnlyTools, rerunSelfReview, startDeepReview } from "./deep";
-import { listOpenPrs, parsePrRef, prForBranch, prView, viewer, type OpenPr } from "./gh";
+import { ghBin, listOpenPrs, parsePrRef, prForBranch, prView, viewer, type OpenPr } from "./gh";
 import { recentProgress } from "./live";
 import { checkoutInfo } from "./local";
 import { STACK_SCHEMA, stackPrompt, stackSystem, type StackLayerInput, type StackOutput } from "./prompts/stack";
@@ -312,7 +312,7 @@ async function changeNote(s: StackRow, l: LayerRow, r: ReviewBits): Promise<stri
   const hit = changeNotes.get(key);
   if (hit) return hit;
   const short = r.head_sha.slice(0, 8);
-  const res = await $`gh api repos/${s.owner}/${s.name}/compare/${key} --jq ${"[.status, .ahead_by, ([.commits[].commit.message | split(\"\\n\")[0]] | join(\"\\u0000\"))] | @tsv"}`
+  const res = await $`${ghBin()} api repos/${s.owner}/${s.name}/compare/${key} --jq ${"[.status, .ahead_by, ([.commits[].commit.message | split(\"\\n\")[0]] | join(\"\\u0000\"))] | @tsv"}`
     .quiet()
     .nothrow();
   let note = `New commits since \`${short}\`.`;
@@ -836,7 +836,7 @@ export async function postStack(id: number): Promise<Array<{ pr: number; ok: boo
     const outcome = new Map(subs.map((x) => [x.pr, EVENT_LABEL[x.event]]));
     const text = (s.summary_text ?? defaultSummary(layers)).replace(/^(- #(\d+) .*)$/gm, (line, _all, pr) => (outcome.has(Number(pr)) ? `${line}: ${outcome.get(Number(pr))}` : line));
     if (top) {
-      const res = await $`gh pr comment ${String(top.pr)} -R ${`${s.owner}/${s.name}`} --body ${text}`.quiet().nothrow();
+      const res = await $`${ghBin()} pr comment ${String(top.pr)} -R ${`${s.owner}/${s.name}`} --body ${text}`.quiet().nothrow();
       if (res.exitCode !== 0) results.push({ pr: top.pr, ok: false, error: `Summary comment: ${res.stderr.toString().trim()}` });
     }
   }

@@ -9,6 +9,7 @@
 import { $ } from "bun";
 import { COMPILED, CODENAME, VERSION } from "../build-info";
 import { CLI_LINK, CLI_NAME, CLI_TARGET, cliInfo, linkCli, removeLegacyLinks } from "../server/cli";
+import { ghBin } from "../server/gh";
 import { DATA_DIR, DOMAIN, PORT, httpsHost, publicUrl, saveServiceConfig, serviceConfig } from "../server/config";
 import { APP_LABEL, CADDY_LABEL, LEGACY_LABELS, PATH, install as installService } from "./service";
 import { ask as askTty, c, detail, header, icons, interactive, line, note, section, spinner, sudoUpfront, task } from "./ui";
@@ -46,7 +47,8 @@ export async function setup(argv: string[]) {
   let missing = 0;
 
   const ask = (q: string, yes = true) => (YES ? yes : askTty(q, yes));
-  const has = (bin: string) => Bun.which(bin) != null;
+  // With the PATH set above: Bun.which on its own would use the one this process started with.
+  const has = (bin: string) => Bun.which(bin, { PATH: process.env.PATH ?? "" }) != null;
   const quiet = async (s: ReturnType<typeof $>) => (await s.quiet().nothrow()).exitCode === 0;
   const brew = (label: string, ...pkg: string[]) => task(label, ["brew", "install", ...pkg], BREW_ENV);
 
@@ -89,7 +91,7 @@ export async function setup(argv: string[]) {
   );
   await ensure(
     "gh is logged in",
-    async () => has("gh") && quiet($`gh auth status`),
+    async () => has("gh") && quiet($`${ghBin()} auth status`),
     async () => has("gh") && ask("Log in to GitHub now? (gh auth login)") && interactive(["gh", "auth", "login"]),
     "gh auth login",
   );

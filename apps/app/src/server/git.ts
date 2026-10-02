@@ -4,6 +4,7 @@ import { $ } from "bun";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { REPOS_DIR, WORKTREES_DIR } from "./config";
+import { ghBin } from "./gh";
 
 /** Serialises git operations per repo — concurrent fetches fight over ref locks. */
 const locks = new Map<string, Promise<unknown>>();
@@ -29,7 +30,7 @@ async function ensureClone(owner: string, repo: string, log: (m: string) => void
   if (existsSync(join(dir, ".git")) || existsSync(join(dir, "HEAD"))) return dir;
   mkdirSync(join(REPOS_DIR, owner), { recursive: true });
   log(`Cloning ${owner}/${repo} (first time only, blobless)`);
-  const res = await $`gh repo clone ${`${owner}/${repo}`} ${dir} -- --filter=blob:none --no-checkout`.quiet().nothrow();
+  const res = await $`${ghBin()} repo clone ${`${owner}/${repo}`} ${dir} -- --filter=blob:none --no-checkout`.quiet().nothrow();
   if (res.exitCode !== 0) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`Cloning ${owner}/${repo} failed: ${res.stderr.toString().trim()}`);
