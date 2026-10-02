@@ -40,7 +40,14 @@ interface Agent {
 }
 
 function agents(): Agent[] {
-  const env = { PATH, HOME, PORT: String(PORT), PR_BUNNY_HOME: DATA_DIR, PR_BUNNY_DOMAIN: DOMAIN };
+  const env = {
+    PATH,
+    HOME,
+    PORT: String(PORT),
+    PR_BUNNY_HOME: DATA_DIR,
+    PR_BUNNY_DOMAIN: DOMAIN,
+    PR_BUNNY_HTTPS_PORT: String(serviceConfig().httpsPort),
+  };
   const bun = Bun.which("bun", { PATH }) ?? process.execPath;
   const list: Agent[] = [
     {

@@ -26,23 +26,32 @@ export const DOMAIN = env("DOMAIN") ?? "prbunny.localhost";
 /**
  * How the app is reached, chosen in `bunny setup`: plain http://127.0.0.1:4477 (the default), or
  * https://prbunny.localhost through the optional Caddy proxy. Saved in the data folder.
+ * `httpsPort` is for when something else (e.g. Tailscale Serve/Funnel) already holds 443.
  */
 export interface ServiceConfig {
   https: boolean;
+  httpsPort: number;
 }
 const SERVICE_FILE = join(DATA_DIR, "service.json");
+const validPort = (p: unknown) => (Number.isInteger(p) && (p as number) > 0 && (p as number) < 65536 ? (p as number) : 443);
 
 export function serviceConfig(): ServiceConfig {
   try {
-    return { https: Boolean(JSON.parse(readFileSync(SERVICE_FILE, "utf8")).https) };
+    const c = JSON.parse(readFileSync(SERVICE_FILE, "utf8"));
+    return { https: Boolean(c.https), httpsPort: validPort(c.httpsPort) };
   } catch {
-    return { https: false };
+    return { https: false, httpsPort: 443 };
   }
 }
 
 export function saveServiceConfig(c: ServiceConfig) {
-  writeFileSync(SERVICE_FILE, `${JSON.stringify(c, null, 2)}\n`);
+  // Only write the port when it isn't the default, so service.json stays `{ "https": true }` for most.
+  const out = c.httpsPort === 443 ? { https: c.https } : c;
+  writeFileSync(SERVICE_FILE, `${JSON.stringify(out, null, 2)}\n`);
 }
+
+/** The HTTPS host as a browser sends it: `prbunny.localhost`, or `prbunny.localhost:4443` off 443. */
+export const httpsHost = (port = serviceConfig().httpsPort) => (port === 443 ? DOMAIN : `${DOMAIN}:${port}`);
 
 /** launchd labels for the login service (see src/cli/service.ts). */
 export const APP_LABEL = "dev.prbunny.app";
@@ -84,7 +93,7 @@ export const RELEASE_SOURCES: ReleaseSource[] | "off" =
         ];
 
 /** Where the UI is opened: the HTTPS domain if set up, else the local port. */
-export const publicUrl = () => (serviceConfig().https ? `https://${DOMAIN}` : `http://127.0.0.1:${PORT}`);
+export const publicUrl = () => (serviceConfig().https ? `https://${httpsHost()}` : `http://127.0.0.1:${PORT}`);
 
 export const MODELS = {
   recon: env("RECON_MODEL") ?? "sonnet",

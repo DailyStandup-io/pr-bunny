@@ -56,7 +56,7 @@ is missing, asking before it installs anything or uses `sudo`:
 |---|---|
 | Prerequisites | Checks for git, `gh` (offers `brew install gh` and `gh auth login`), and `claude` or `codex` |
 | Address | PR Bunny runs at **http://127.0.0.1:4477**. Optionally it also serves **https://prbunny.localhost** through Caddy: say yes, or pass `--https` |
-| HTTPS (optional) | Installs Caddy, adds `127.0.0.1 prbunny.localhost` to `/etc/hosts` (sudo), and stops Homebrew's own Caddy service if it's on |
+| HTTPS (optional) | Installs Caddy, adds `127.0.0.1 prbunny.localhost` to `/etc/hosts` (sudo), stops Homebrew's own Caddy service if it's on, and checks nothing else holds port 443 (Tailscale Serve/Funnel often does); if something does, offers another port such as https://prbunny.localhost:4443 |
 | Login service | A launchd agent that starts the app at login and restarts it if it crashes (`dev.prbunny.app`), plus Caddy (`dev.prbunny.caddy`) if HTTPS is on. Removes older `pr.review.*` / `com.review-desk.*` agents |
 | Terminal command | Offers to link `~/.local/bin/bunny` to the app, so `bunny review` works from any checkout |
 | Certificate (optional) | With HTTPS: trusts Caddy's local certificate authority in the System keychain (sudo) |
@@ -75,7 +75,7 @@ again** reopens it.
 
 Options: `bunny setup --check` reports what's done and changes nothing; `--yes` skips the
 questions (sudo still asks for your password); `--https` / `--no-https` turn the HTTPS address on or
-off. Use another hostname with `PR_BUNNY_DOMAIN=review.local bunny setup --https`. Environment
+off; `--https-port 4443` serves HTTPS on another port. Use another hostname with `PR_BUNNY_DOMAIN=review.local bunny setup --https`. Environment
 variables are `PR_BUNNY_*`; the older `REVIEW_PR_*` and `REVIEW_DESK_*` names still work.
 
 ## Updates
