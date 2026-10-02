@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 “Kale” — 2026-10-02
+
+### Fixed
+- HTTPS works when something else already uses port 443, such as Tailscale Serve or Funnel.
+  Caddy used to fail to start and keep retrying; `bunny setup --https` now says what holds the
+  port and offers another one, e.g. https://prbunny.localhost:4443 (or pick one with
+  `--https-port`). If https://prbunny.localhost stopped working for you, run `bunny setup --https`.
+- `bunny setup` checks for tools on the right PATH.
+
 ## 0.5.0 “Jicama” — 2026-09-28
 
 ### Added

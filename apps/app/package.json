@@ -1,7 +1,7 @@
 {
   "name": "@pr-bunny/app",
-  "version": "0.5.0",
-  "codename": "Jicama",
+  "version": "0.5.1",
+  "codename": "Kale",
   "type": "module",
   "private": true,
   "bin": {
