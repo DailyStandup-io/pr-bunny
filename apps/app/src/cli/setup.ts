@@ -23,8 +23,33 @@ const tilde = (p: string) => p.replace(process.env.HOME ?? "", "~");
 const ALT_HTTPS_PORTS = [4443, 4444, 4445, 8444, 9443];
 
 /**
- * Who's listening on a TCP port, as "name (pid n)", ignoring Caddy (ours, or Homebrew's, checked on its own).
- * netstat rather than lsof: lsof can't see root and system-extension listeners (Tailscale's) without sudo.
+ * Whether Caddy could listen on `port`: bind it the way Caddy does (every address). Above 1024 also
+ * try loopback, where the app and dev servers listen. Below, macOS only allows the wildcard anyway.
+ */
+function canBind(port: number): boolean {
+  for (const hostname of port < 1024 ? ["::"] : ["::", "127.0.0.1"]) {
+    try {
+      Bun.listen({ hostname, port, socket: { data() {} } }).stop(true);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Our own Caddy already serving on `port` (its admin API is the Caddyfile's). */
+async function ourCaddyOn(port: number): Promise<boolean> {
+  const servers = await fetch(`http://${ADMIN}/config/apps/http/servers`, { signal: AbortSignal.timeout(1000) }).then(
+    (r) => (r.ok ? r.text() : ""),
+    () => "",
+  );
+  return servers.includes(`":${port}"`);
+}
+
+/**
+ * Who's listening on a TCP port, as "name (pid n)", for the message only: netstat sees root and
+ * system-extension listeners (Tailscale's) that lsof can't without sudo, but it prints nothing when
+ * run from the compiled binary, so this may come back empty.
  */
 async function portHolders(port: number): Promise<string[]> {
   const out = (await $`netstat -anv -p tcp`.quiet().nothrow()).stdout.toString();
@@ -175,15 +200,15 @@ export async function setup(argv: string[]) {
     );
     // Caddy can't share the port: macOS only lets it bind 443 on every address, and anything already
     // there (Tailscale Serve/Funnel, Docker, another proxy) wins. Move to a free port rather than crash-loop.
-    let holders: string[] = [];
     await ensure(
       "Caddy's HTTPS port is free",
-      async () => (holders = await portHolders(httpsPort)).length === 0,
+      async () => canBind(httpsPort) || (await ourCaddyOn(httpsPort)),
       async () => {
-        note(`Port ${httpsPort} is in use by ${holders.join(", ")}.`);
+        const holders = await portHolders(httpsPort);
+        note(`Port ${httpsPort} is in use by ${holders.length ? holders.join(", ") : "another program"}.`);
         let alt: number | undefined;
         for (const p of ALT_HTTPS_PORTS) {
-          if (p !== httpsPort && (await portHolders(p)).length === 0) {
+          if (p !== httpsPort && canBind(p)) {
             alt = p;
             break;
           }
