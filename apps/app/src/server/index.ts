@@ -36,15 +36,18 @@ import {
 import { previewSkill, repoSkills, searchFiles } from "./skills";
 import { findSelfReview, openPrFor, startSelfReview, suggestReviewers, type StartSelf } from "./self";
 import { getInbox, repoPrs, searchPrs } from "./inbox";
-import { feed, markAllRead, markSeen, NOTIFY_TOPIC, openNotification, startNotifier } from "./notify";
+import { feed, fixFromNotification, markAllRead, markSeen, NOTIFY_TOPIC, openNotification, skipFromNotification, startNotifier } from "./notify";
 import { SERVICE_WORKER } from "./sw";
 import { avatarSvg } from "./avatar";
 import { ACTIVITY, attachServer, getBacklog, topic } from "./live";
 import { collaborators, markReady, mergePr, selfPr, watchSelfPrs } from "./prstate";
 import type { MergeMethod } from "../shared/types";
 import { activeRuns, continueRecon, getReview, getRow, lastStoppedRun, listReviews, markRead, recoverInterrupted, retryRecon, startReview } from "./reviews";
+import { approveFix, declineFix, ensureFix, fixBacklog, fixTopic, getFix, recoverInterruptedFixes, runningFixWorktrees, skipFixById, startFix, stopFix } from "./fix";
+import { parsePrRef } from "./gh";
 
 recoverInterrupted();
+recoverInterruptedFixes();
 scheduleUpdateChecks();
 startStackRunner();
 startNotifier();
@@ -54,7 +57,7 @@ setInterval(() => void watchSelfPrs().catch(() => {}), 3 * 60_000).unref?.();
 
 // Remove posted/abandoned PR checkouts now and hourly (see cleanup.ts for the rules).
 const runCleanup = () => {
-  cleanupWorktrees({ isRunning: isReviewRunning }).catch((e) => console.warn("cleanup failed:", e));
+  cleanupWorktrees({ isRunning: isReviewRunning, runningFixes: runningFixWorktrees() }).catch((e) => console.warn("cleanup failed:", e));
   // Settings › Housekeeping › Clear finished reviews (off by default).
   try {
     const n = autoClearReviews();
@@ -101,7 +104,7 @@ const reviewOr404 = async (id: number) => (await getReview(id)) ?? Promise.rejec
 
 type R<P extends string> = BunRequest<P>;
 
-const server = Bun.serve<{ reviewId: number }>({
+const server = Bun.serve<{ reviewId: number; fixId?: number }>({
   hostname: HOST,
   port: PORT,
   development: process.env.NODE_ENV !== "production" && { hmr: true, console: true },
@@ -111,6 +114,7 @@ const server = Bun.serve<{ reviewId: number }>({
     "/review": index,
     "/review/*": index,
     "/stack/*": index,
+    "/fix/*": index,
     "/history": index,
     "/analytics": index,
     "/settings": index,
@@ -344,6 +348,50 @@ const server = Bun.serve<{ reviewId: number }>({
     "/api/notifications/:id/open": {
       POST: api((req: R<"/api/notifications/:id/open">) => openNotification(Number(req.params.id))),
     },
+    // Fix / Don't fix on a "changes requested on your PR" notification (the bell or the desktop alert).
+    "/api/notifications/:id/fix": {
+      POST: api((req: R<"/api/notifications/:id/fix">) => fixFromNotification(Number(req.params.id))),
+    },
+    "/api/notifications/:id/skip": {
+      POST: api((req: R<"/api/notifications/:id/skip">) => skipFromNotification(Number(req.params.id))),
+    },
+
+    // ---------- fixes: changes requested on your PR, made by the agent (src/server/fix.ts) ----------
+    // The fix for a PR (found or created with the reviewer's requests loaded). Read-only.
+    "/api/fixes": {
+      POST: api(async (req) => {
+        const { pr, repo } = await body<{ pr?: string | number; repo?: string }>(req);
+        if (pr == null) throw new Error("Missing `pr`");
+        const fix = await ensureFix(parsePrRef(String(pr), repo));
+        return json({ id: fix.id }, 201);
+      }),
+    },
+    "/api/fixes/:id": {
+      GET: api((req: R<"/api/fixes/:id">) => getFix(Number(req.params.id)) ?? Promise.reject(new Error("Not found"))),
+    },
+    // Runs the agent in PR Bunny's own checkout of the PR; nothing reaches GitHub.
+    "/api/fixes/:id/start": {
+      POST: api((req: R<"/api/fixes/:id/start">) => (startFix(Number(req.params.id)), getFix(Number(req.params.id)))),
+    },
+    "/api/fixes/:id/stop": {
+      POST: api((req: R<"/api/fixes/:id/stop">) => ({ stopping: stopFix(Number(req.params.id)) })),
+    },
+    // GitHub write: commits the diff you were shown and pushes it to the PR branch. Only from the confirmed Approve click.
+    "/api/fixes/:id/approve": {
+      POST: api(async (req: R<"/api/fixes/:id/approve">) => {
+        const input = await body<{ commitMessage?: string; headSha?: string }>(req);
+        if (typeof input.headSha !== "string" || !/^[0-9a-f]{40}$/.test(input.headSha)) throw new Error("Missing the commit this fix was made on. Reload and try again.");
+        await approveFix(Number(req.params.id), { commitMessage: String(input.commitMessage ?? ""), headSha: input.headSha });
+        return getFix(Number(req.params.id));
+      }),
+    },
+    // "Don't fix" from the fix page: remembers the choice. Nothing runs.
+    "/api/fixes/:id/skip": {
+      POST: api((req: R<"/api/fixes/:id/skip">) => (skipFixById(Number(req.params.id)), getFix(Number(req.params.id)))),
+    },
+    "/api/fixes/:id/decline": {
+      POST: api((req: R<"/api/fixes/:id/decline">) => (declineFix(Number(req.params.id)), getFix(Number(req.params.id)))),
+    },
     // Handles clicks on desktop notifications (focus the tab, or open one).
     "/sw.js": (req: Request) =>
       rejectForeign(req) ?? new Response(SERVICE_WORKER, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-cache" } }),
@@ -513,24 +561,32 @@ const server = Bun.serve<{ reviewId: number }>({
 
     // reviewId 0 = the activity feed (every review's events).
     // reviewId -1 = notifications.
-    "/ws/notifications": (req: Request, srv: Server<{ reviewId: number }>) => {
+    "/ws/notifications": (req: Request, srv: Server<{ reviewId: number; fixId?: number }>) => {
       const blocked = rejectForeign(req);
       if (blocked) return blocked;
       if (srv.upgrade(req, { data: { reviewId: -1 } })) return undefined;
       return fail("Expected a websocket upgrade", 426);
     },
 
-    "/ws/activity": (req: Request, srv: Server<{ reviewId: number }>) => {
+    "/ws/activity": (req: Request, srv: Server<{ reviewId: number; fixId?: number }>) => {
       const blocked = rejectForeign(req);
       if (blocked) return blocked;
       if (srv.upgrade(req, { data: { reviewId: 0 } })) return undefined;
       return fail("Expected a websocket upgrade", 426);
     },
 
-    "/ws/reviews/:id": (req: R<"/ws/reviews/:id">, srv: Server<{ reviewId: number }>) => {
+    "/ws/reviews/:id": (req: R<"/ws/reviews/:id">, srv: Server<{ reviewId: number; fixId?: number }>) => {
       const blocked = rejectForeign(req);
       if (blocked) return blocked;
       if (srv.upgrade(req, { data: { reviewId: Number(req.params.id) } })) return undefined;
+      return fail("Expected a websocket upgrade", 426);
+    },
+
+    // A fix's progress and state changes (reviewId -2, fixId set).
+    "/ws/fixes/:id": (req: R<"/ws/fixes/:id">, srv: Server<{ reviewId: number; fixId?: number }>) => {
+      const blocked = rejectForeign(req);
+      if (blocked) return blocked;
+      if (srv.upgrade(req, { data: { reviewId: -2, fixId: Number(req.params.id) } })) return undefined;
       return fail("Expected a websocket upgrade", 426);
     },
   },
@@ -539,6 +595,11 @@ const server = Bun.serve<{ reviewId: number }>({
     open(ws) {
       if (ws.data.reviewId === -1) {
         ws.subscribe(NOTIFY_TOPIC);
+        return;
+      }
+      if (ws.data.reviewId === -2 && ws.data.fixId) {
+        ws.subscribe(fixTopic(ws.data.fixId));
+        for (const l of fixBacklog(ws.data.fixId)) ws.send(JSON.stringify({ type: "progress", fixId: ws.data.fixId, ...l }));
         return;
       }
       if (ws.data.reviewId === 0) {
@@ -550,7 +611,7 @@ const server = Bun.serve<{ reviewId: number }>({
     },
     message() {},
     close(ws) {
-      ws.unsubscribe(ws.data.reviewId === -1 ? NOTIFY_TOPIC : ws.data.reviewId === 0 ? ACTIVITY : topic(ws.data.reviewId));
+      ws.unsubscribe(ws.data.reviewId === -1 ? NOTIFY_TOPIC : ws.data.reviewId === -2 ? fixTopic(ws.data.fixId ?? 0) : ws.data.reviewId === 0 ? ACTIVITY : topic(ws.data.reviewId));
     },
   },
 

@@ -11,6 +11,7 @@ import type {
   MergeMethod,
   SelfPr,
   AgentInfo,
+  FixDetail,
   Provider,
   ProviderOptions,
   ReviewDetail,
@@ -137,6 +138,12 @@ export const api = {
   collaborators: (id: number) => request<Array<{ h: string; sub: string; team: boolean }>>(`/api/reviews/${id}/collaborators`),
   mergePr: (id: number, input: { method: MergeMethod; deleteBranch: boolean; headSha: string }) => post<SelfPr>(`/api/reviews/${id}/merge`, input),
   markReady: (id: number) => post<SelfPr>(`/api/reviews/${id}/ready`, {}),
+  fix: (id: number) => request<FixDetail>(`/api/fixes/${id}`),
+  startFix: (id: number) => post<FixDetail>(`/api/fixes/${id}/start`),
+  stopFix: (id: number) => post<{ stopping: boolean }>(`/api/fixes/${id}/stop`),
+  skipFix: (id: number) => post<FixDetail>(`/api/fixes/${id}/skip`),
+  approveFix: (id: number, input: { commitMessage: string; headSha: string }) => post<FixDetail>(`/api/fixes/${id}/approve`, input),
+  declineFix: (id: number) => post<FixDetail>(`/api/fixes/${id}/decline`),
 };
 
 /** Loads async data and re-runs when deps change. `reload` re-fetches without flashing empty. */

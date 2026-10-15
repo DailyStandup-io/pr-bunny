@@ -4,9 +4,10 @@
 //
 // Sources: review phase changes (via live.ts), stacks and updates (watched in the database and
 // update state), and GitHub, polled with read-only `gh` calls every couple of minutes.
-import type { AppNotification, LiveEvent, NotifyKind, Phase } from "../shared/types";
+import type { AppNotification, FixState, LiveEvent, NotifyKind, Phase } from "../shared/types";
 import { db } from "./db/db";
-import { assignedPrs, myPrReviews, prHeads, reviewInbox, reviewRequests, viewer } from "./gh";
+import { ensureFix, getFixRow, onFixState, skipFix, startFix } from "./fix";
+import { assignedPrs, myPrReviews, parsePrRef, prHeads, reviewInbox, reviewRequests, viewer, type MyPrReview } from "./gh";
 import { onEmit, publish } from "./live";
 import { lastStoppedRun, latestReviewFor, startReview } from "./reviews";
 import { getSettings } from "./settings";
@@ -15,7 +16,7 @@ import { updateState } from "./update";
 export const NOTIFY_TOPIC = "notifications";
 
 /** Events that come from GitHub; the "From" repo filter applies to these. */
-const GITHUB_KINDS = new Set<NotifyKind>(["req", "assign", "stackUpd", "myReview"]);
+const GITHUB_KINDS = new Set<NotifyKind>(["req", "assign", "stackUpd", "myReview", "changesReq"]);
 /** How many bell entries to keep. */
 const KEEP = 200;
 
@@ -36,7 +37,12 @@ interface Row {
   created_at: string;
   seen_at: string | null;
   read_at: string | null;
+  fix_id: number | null;
+  fix_state: FixState | null;
 }
+
+/** A notification row with the state of the fix it led to (changes requested on your PR). */
+const ROW_SQL = "SELECT n.*, f.state AS fix_state FROM notifications n LEFT JOIN fixes f ON f.id = n.fix_id";
 
 const toItem = (r: Row): AppNotification => ({
   id: r.id,
@@ -52,6 +58,7 @@ const toItem = (r: Row): AppNotification => ({
   createdAt: r.created_at,
   seen: Boolean(r.seen_at),
   read: Boolean(r.read_at),
+  fix: r.fix_id && r.fix_state ? { id: r.fix_id, state: r.fix_state } : null,
 });
 
 export interface NewNotification {
@@ -92,7 +99,7 @@ export function record(n: NewNotification): AppNotification | null {
     .get(n.kind, n.title, n.body, n.summary, n.subject ?? "", n.repo ?? null, n.pr ?? null, n.reviewId ?? null, n.stackId ?? null, n.href, n.tag, n.face, n.key) as Row | null;
   if (!row) return null;
   db.run(`DELETE FROM notifications WHERE id <= (SELECT id FROM notifications ORDER BY id DESC LIMIT 1 OFFSET ${KEEP})`);
-  const item = toItem(row);
+  const item = toItem({ ...row, fix_state: null });
   publish(NOTIFY_TOPIC, { type: "notification", item });
   return item;
 }
@@ -100,7 +107,7 @@ export function record(n: NewNotification): AppNotification | null {
 // ---------- the bell ----------
 
 export function feed(limit = 50) {
-  const items = (db.query("SELECT * FROM notifications ORDER BY created_at DESC, id DESC LIMIT ?").all(Math.min(Math.max(1, limit), KEEP)) as Row[]).map(toItem);
+  const items = (db.query(`${ROW_SQL} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`).all(Math.min(Math.max(1, limit), KEEP)) as Row[]).map(toItem);
   const { n } = db.query("SELECT COUNT(*) AS n FROM notifications WHERE seen_at IS NULL").get() as { n: number };
   return { items, unseen: n };
 }
@@ -124,7 +131,7 @@ export function markAllRead() {
  * A review request or assignment opens the PR's review, starting the scan if it hasn't run yet.
  */
 export async function openNotification(id: number): Promise<{ path: string; reviewId?: number; tab?: "findings" }> {
-  const row = db.query("SELECT * FROM notifications WHERE id = ?").get(id) as Row | null;
+  const row = db.query(`${ROW_SQL} WHERE n.id = ?`).get(id) as Row | null;
   if (!row) throw new Error("Notification not found");
   db.run("UPDATE notifications SET read_at = COALESCE(read_at, datetime('now')), seen_at = COALESCE(seen_at, datetime('now')) WHERE id = ?", [id]);
   sync();
@@ -134,8 +141,72 @@ export async function openNotification(id: number): Promise<{ path: string; revi
     return { path: `/review/${reviewId}`, reviewId };
   }
   if (row.kind === "deep" && row.review_id) return { path: row.href, reviewId: row.review_id, tab: "findings" };
+  // Changes requested on your PR: the fix page shows what was asked, with Fix / Don't fix.
+  if (row.kind === "changesReq" && row.repo && row.pr_number) {
+    if (row.fix_id) return { path: `/fix/${row.fix_id}` };
+    const fix = await ensureFix(parsePrRef(`${row.repo}#${row.pr_number}`), { notificationId: id }).catch(() => null);
+    return { path: fix ? `/fix/${fix.id}` : row.href };
+  }
   return { path: row.href };
 }
+
+const changesReqRow = (id: number): Row => {
+  const row = db.query(`${ROW_SQL} WHERE n.id = ?`).get(id) as Row | null;
+  if (!row) throw new Error("Notification not found");
+  if (row.kind !== "changesReq" || !row.repo || !row.pr_number) throw new Error("This notification isn't about changes requested on your PR.");
+  return row;
+};
+
+/** The "Fix" button on a changes-requested notification: starts the agent and says where to watch. */
+export async function fixFromNotification(id: number): Promise<{ fixId: number }> {
+  const row = changesReqRow(id);
+  db.run("UPDATE notifications SET read_at = COALESCE(read_at, datetime('now')), seen_at = COALESCE(seen_at, datetime('now')) WHERE id = ?", [id]);
+  const fix = (row.fix_id && getFixRow(row.fix_id)) || (await ensureFix(parsePrRef(`${row.repo}#${row.pr_number}`), { notificationId: id }));
+  if (fix.state === "new" || fix.state === "failed" || fix.state === "declined" || fix.state === "skipped") startFix(fix.id);
+  sync();
+  return { fixId: fix.id };
+}
+
+/** The "Don't fix" button: remembers the choice and marks the entry read. Nothing runs. */
+export async function skipFromNotification(id: number): Promise<{ fixId: number }> {
+  const row = changesReqRow(id);
+  db.run("UPDATE notifications SET read_at = COALESCE(read_at, datetime('now')), seen_at = COALESCE(seen_at, datetime('now')) WHERE id = ?", [id]);
+  const fix = await skipFix(parsePrRef(`${row.repo}#${row.pr_number}`), { title: row.subject, url: row.href }, id);
+  sync();
+  return { fixId: fix.id };
+}
+
+// ---------- fixes (state changes) ----------
+
+onFixState((fixId, state) => {
+  if (state !== "ready" && state !== "failed") return;
+  const f = getFixRow(fixId);
+  if (!f) return;
+  const repo = `${f.owner}/${f.repo}`;
+  const base = { subject: f.title, repo, pr: f.pr_number, href: `/fix/${f.id}`, tag: `fix:${f.id}` };
+  const files: Array<{ path: string }> = f.files_json ? JSON.parse(f.files_json) : [];
+  if (state === "ready") {
+    record({
+      ...base,
+      kind: "fixReady",
+      title: `Fix ready · #${f.pr_number}`,
+      body: `${plural(files.length, "file")} changed. ${f.title}. Approve to push it to ${f.head_ref ?? "the PR"}.`,
+      summary: "A fix is ready for you to approve",
+      face: "smile",
+      key: `fixReady:${f.id}:${f.finished_at ?? Date.now()}`,
+    });
+    return;
+  }
+  record({
+    ...base,
+    kind: "failed",
+    title: `Fix failed · ${repo} #${f.pr_number}`,
+    body: (f.error ?? "Something went wrong.").split("\n")[0]!.slice(0, 160),
+    summary: "Fix failed",
+    face: "crying",
+    key: `fixFailed:${f.id}:${f.finished_at ?? Date.now()}`,
+  });
+});
 
 // ---------- reviews (phase changes) ----------
 
@@ -372,34 +443,41 @@ async function pollAssigned() {
   );
 }
 
+/**
+ * A review of one of your PRs. Changes requested get their own kind (with Fix / Don't fix) when
+ * that event is on; otherwise they're an ordinary "my PR got a review" entry.
+ */
+export function recordMyReview(r: MyPrReview): AppNotification | null {
+  const said = r.comments ? `left ${plural(r.comments, "comment")} on` : r.state === "APPROVED" ? "approved" : "reviewed";
+  const base = { body: `@${r.author} ${said} ${r.title}.`, subject: r.title, repo: r.repo, pr: r.number, href: r.url, tag: `pr:${r.repo}#${r.number}`, key: `myrev:${r.id}:${r.state}` };
+  if (r.state === "CHANGES_REQUESTED" && wanted("changesReq", r.repo)) {
+    return record({
+      ...base,
+      kind: "changesReq",
+      title: `Changes requested on #${r.number}`,
+      body: `@${r.author} ${r.comments ? `left ${plural(r.comments, "comment")} on` : "requested changes on"} ${r.title}. Fix it with ${agentLabel()}, or not.`,
+      summary: `@${r.author} requested changes`,
+      face: "wobbly",
+    });
+  }
+  const [title, summary, face] =
+    r.state === "APPROVED"
+      ? [`Approved: #${r.number}`, `@${r.author} approved`, "hearts"]
+      : r.state === "CHANGES_REQUESTED"
+        ? [`Changes requested on #${r.number}`, `@${r.author} requested changes`, "wobbly"]
+        : [`New review on #${r.number}`, `@${r.author} reviewed`, "wobbly"];
+  return record({ ...base, kind: "myReview", title, summary, face });
+}
+
+const agentLabel = () => (getSettings().provider === "codex" ? "Codex" : "Claude");
+
 async function pollMyReviews() {
   fresh(
     "myrev",
     await myPrReviews(),
     (r) => r.id,
     (r) => r.state,
-    (r) => {
-      const [title, summary, face] =
-        r.state === "APPROVED"
-          ? [`Approved: #${r.number}`, `@${r.author} approved`, "hearts"]
-          : r.state === "CHANGES_REQUESTED"
-            ? [`Changes requested on #${r.number}`, `@${r.author} requested changes`, "wobbly"]
-            : [`New review on #${r.number}`, `@${r.author} reviewed`, "wobbly"];
-      const said = r.comments ? `left ${plural(r.comments, "comment")} on` : r.state === "APPROVED" ? "approved" : "reviewed";
-      record({
-        kind: "myReview",
-        title,
-        body: `@${r.author} ${said} ${r.title}.`,
-        summary,
-        subject: r.title,
-        repo: r.repo,
-        pr: r.number,
-        href: r.url,
-        tag: `pr:${r.repo}#${r.number}`,
-        face,
-        key: `myrev:${r.id}:${r.state}`,
-      });
-    },
+    (r) => void recordMyReview(r),
   );
 }
 
@@ -474,7 +552,7 @@ async function pollHeads() {
 const POLLS: Array<[string, NotifyKind[], () => Promise<void>]> = [
   ["req", ["req"], pollRequests],
   ["assign", ["assign"], pollAssigned],
-  ["myrev", ["myReview"], pollMyReviews],
+  ["myrev", ["myReview", "changesReq"], pollMyReviews],
   ["head", ["changed", "stackUpd"], pollHeads],
 ];
 

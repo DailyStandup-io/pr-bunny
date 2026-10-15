@@ -1221,8 +1221,55 @@ const pr1495: FixturePr = {
   updatedMinutesAgo: 60 * 2,
   github: {
     checks: [["typecheck", "SUCCESS"], ["unit", "SUCCESS"], ["e2e", "SUCCESS"]],
-    decision: "APPROVED",
-    reviews: [{ author: "lena-okoro", state: "APPROVED", minutesAgo: 50, comments: 1 }],
+    decision: "CHANGES_REQUESTED",
+    reviews: [
+      { author: "lena-okoro", state: "APPROVED", minutesAgo: 50, comments: 1 },
+      {
+        author: "jonah-pike",
+        state: "CHANGES_REQUESTED",
+        minutesAgo: 20,
+        comments: 2,
+        body: "Nice change, and thanks for the test. Two things before this goes in.",
+        inline: [
+          { at: { path: "src/lib/money.ts", match: 'console.log("formatMoney"' }, body: "Please drop this log, it fires on every price on the page." },
+          {
+            at: { path: "src/lib/money.ts", match: "let formatter = formatters.get(currency);" },
+            body: "The cache is keyed by currency only, so whichever locale formats EUR first wins. Can you key it by locale and currency?",
+          },
+        ],
+      },
+    ],
+  },
+  fix: {
+    summary:
+      "Removed the debug `console.log` from `formatMoney` and keyed the formatter cache by `${locale}:${currency}`, so EUR formatted for `de-DE` and `en-IE` each get their own formatter. Added a test that formats EUR in both locales.",
+    commitMessage: "Key money formatters by locale and drop the debug log",
+    addressed: [
+      { comment: "C1 \"Please drop this log\"", change: "Removed the console.log from formatMoney." },
+      { comment: "C2 \"The cache is keyed by currency only\"", change: "The cache key is now `${locale}:${currency}`, with a test for de-DE then en-IE." },
+    ],
+    notAddressed: [],
+    edits: [
+      {
+        path: "src/lib/money.ts",
+        replace: [
+          ['  console.log("formatMoney", cents, currency, locale);\n', ""],
+          [
+            "  let formatter = formatters.get(currency);\n  if (!formatter) {\n    formatter = new Intl.NumberFormat(locale, { style: \"currency\", currency });\n    formatters.set(currency, formatter);",
+            "  const key = `${locale}:${currency}`;\n  let formatter = formatters.get(key);\n  if (!formatter) {\n    formatter = new Intl.NumberFormat(locale, { style: \"currency\", currency });\n    formatters.set(key, formatter);",
+          ],
+        ],
+      },
+      {
+        path: "src/lib/money.test.ts",
+        replace: [
+          [
+            '  expect(formatMoney(1999, "USD", "en-US")).toBe("$19.99");\n});',
+            '  expect(formatMoney(1999, "USD", "en-US")).toBe("$19.99");\n});\n\ntest("formats EUR per locale", () => {\n  expect(formatMoney(1999, "EUR", "de-DE")).toBe("19,99\u00a0€");\n  expect(formatMoney(1999, "EUR", "en-IE")).toBe("€19.99");\n});',
+          ],
+        ],
+      },
+    ],
   },
   commits: [
     {

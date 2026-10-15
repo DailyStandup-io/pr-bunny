@@ -186,7 +186,7 @@ for, and whether to include PRs that are already approved or merged.
 ## Notifications
 
 The **Activity** bell at the top of the rail collects what happened: review requests and
-assignments, reviews of your own PRs, new commits on PRs you reviewed or in your stacks, a finished
+assignments, reviews of your own PRs (with a Fix button when changes are requested), new commits on PRs you reviewed or in your stacks, a finished
 overview or deep review, a review that failed or ran out of turns, Review all and the
 across-the-stack pass finishing, and new versions. Click one to go straight to the work.
 
@@ -196,6 +196,16 @@ tab itself, so nothing goes through a push service; with every tab closed, event
 Settings › Notifications picks the events, limits GitHub events to chosen repos, and sets quiet
 hours, staying quiet while PR Bunny is in front, and bundling bursts into one alert. GitHub events
 come from polling `gh` (read-only) every two minutes.
+
+### Changes requested on your PR
+
+When a reviewer requests changes on one of your PRs, the notification has **Fix** and **Don't
+fix** buttons (in the bell, and on the desktop alert in Chrome, Edge and Arc). Fix hands the
+reviewer's comments to your agent, which edits PR Bunny's own checkout of the PR (never your working
+copy). The fix page then shows what it changed and why, comment by comment, with the full diff and
+a commit message you can edit. **Approve and push** commits it under your git name and pushes it to
+the PR branch, after you confirm; it never force-pushes and stops if the branch moved on. **Decline**
+throws the diff away. Don't fix just records your choice.
 
 ## Day to day
 

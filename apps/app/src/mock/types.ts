@@ -84,6 +84,20 @@ export interface GithubReview {
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED";
   minutesAgo: number;
   comments: number;
+  /** The review's body, as `gh api …/reviews` returns it. */
+  body?: string;
+  /** Inline comments (their count should match `comments`), anchored on the PR head. */
+  inline?: Array<{ at: Anchor; body: string }>;
+}
+
+/** What the fake agent does when asked to fix the changes requested on this PR. */
+export interface FixScript {
+  summary: string;
+  commitMessage: string;
+  addressed: Array<{ comment: string; change: string }>;
+  notAddressed: Array<{ comment: string; why: string }>;
+  /** Applied to the checkout the agent runs in (`replace` pairs as in Edit). */
+  edits: Edit[];
 }
 
 export interface FixturePr {
@@ -118,6 +132,8 @@ export interface FixturePr {
   rereview?: RereviewScript;
   /** "Ask about this PR" answers, matched by a word in the question; `*` is the fallback. */
   askPr?: Record<string, string>;
+  /** Your own PR with changes requested: the agent's fix. */
+  fix?: FixScript;
 }
 
 /** A branch in the viewer's checkout with no PR yet (self-review of a local branch). */

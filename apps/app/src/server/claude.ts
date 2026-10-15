@@ -21,6 +21,11 @@ export interface ClaudeOptions {
    * `Read(//abs/dir/**)` rules this keeps Claude inside the PR checkout.
    */
   permissionMode?: "dontAsk";
+  /**
+   * The run may edit files in `cwd` (fixes). For Claude this is expressed through `tools` and
+   * path-scoped Edit/Write rules; Codex gets a workspace-write sandbox instead of read-only.
+   */
+  write?: boolean;
   maxTurns?: number;
   /** CLI `--effort`; omitted = the model's default. */
   effort?: string;
@@ -205,6 +210,8 @@ function describeTool(name: string, input: Record<string, any>): string {
     case "Grep": return `Searching for ${JSON.stringify(input.pattern ?? "")}${input.path ? ` in ${input.path}` : ""}`;
     case "Glob": return `Listing ${input.pattern ?? "files"}`;
     case "Bash": return `Running ${String(input.command ?? "").slice(0, 120)}`;
+    case "Edit": return `Editing ${input.file_path ?? "a file"}`;
+    case "Write": return `Writing ${input.file_path ?? "a file"}`;
     case "Task":
     case "Agent": return `Delegating: ${input.description ?? "subtask"}`;
     default: return `Using ${name}`;

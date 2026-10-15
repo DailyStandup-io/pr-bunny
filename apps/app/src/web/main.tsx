@@ -21,6 +21,7 @@ import { ReviewHome } from "./pages/ReviewHome";
 import { SettingsPage } from "./pages/Settings";
 import { SetupPage } from "./pages/Setup";
 import { StackPage } from "./pages/Stack";
+import { FixPage } from "./pages/Fix";
 import { UpdateDialogs } from "./components/UpdateDialogs";
 import { Icon, type IconName } from "@pr-bunny/icons";
 
@@ -91,6 +92,8 @@ function Shell() {
   const reviewId = reviewMatch ? Number(reviewMatch[1]) : null;
   const stackMatch = path.match(/^\/stack\/(\d+)/);
   const stackId = stackMatch ? Number(stackMatch[1]) : null;
+  const fixMatch = path.match(/^\/fix\/(\d+)/);
+  const fixId = fixMatch ? Number(fixMatch[1]) : null;
   const repo = pickedRepo ?? inbox.data?.lastRepo ?? null;
 
   // Keep the inbox (and its nav dot) fresh without hammering GitHub.
@@ -108,7 +111,7 @@ function Shell() {
   const ib = inboxState(inbox.data, hidden);
   // Analytics used to be History; old links still land there.
   const analytics = path === "/analytics" || path === "/history";
-  const screen = path.startsWith("/review") || path.startsWith("/stack") ? "review" : analytics ? "analytics" : path === "/settings" ? "settings" : "inbox";
+  const screen = path.startsWith("/review") || path.startsWith("/stack") || path.startsWith("/fix") ? "review" : analytics ? "analytics" : path === "/settings" ? "settings" : "inbox";
   // Runs you aren't looking at: they spin on the rail's Review button.
   const elsewhere = runs.filter((r) => r.reviewId !== reviewId);
   const nav = [
@@ -178,7 +181,9 @@ function Shell() {
       )}
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {stackId != null ? (
+        {fixId != null ? (
+          <FixPage id={fixId} />
+        ) : stackId != null ? (
           <StackPage id={stackId} />
         ) : reviewId != null ? (
           <Review id={reviewId} />

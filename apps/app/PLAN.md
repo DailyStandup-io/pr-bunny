@@ -97,6 +97,13 @@ Check your own branch or PR before anyone else sees it.
 - **Open PR:** `gh pr create --fill` with the chosen reviewers, only for a pushed branch whose GitHub tip matches your checkout; adds reviewers if a PR already exists. Findings are never posted.
 - **CLI:** `bunny review [branch] [--base b] [--committed] [--pr n] [--rerun] [--no-open]` posts to the local server and opens the review.
 
+## Fixes (changes requested on your PR)
+
+- **Notify:** the "my PR got a review" poll records CHANGES_REQUESTED as `changesReq` (its own switch, on by default) with Fix / Don't fix in the bell and on the desktop alert. Off: it's an ordinary `myReview` entry.
+- **Fix:** loads each reviewer's standing CHANGES_REQUESTED review and its inline comments (`gh api …/pulls/N/reviews|comments`), checks out the PR head in `worktrees/<repo>/fix-<id>`, and runs the review model with Read/Grep/Glob, read-only git, and Edit/Write scoped to that checkout (`prompts/fix.ts`). The staged diff, summary, per-comment notes and a commit message are saved in `fixes`; the checkout is removed. "Fix ready" notifies.
+- **Approve:** after a confirm, the diff is applied to a fresh checkout of the same head, committed with the user's git identity (else their GitHub noreply address, never a bot trailer) and pushed with a plain `git push` (no force). It refuses if the PR head moved since the fix ran. **Decline** discards the diff; Fix can run again. **Don't fix** just records the choice.
+- Only your own open PRs. Your checkout is never touched.
+
 ## Agents
 
 Reviews can run on Claude Code or Codex (Settings → Agent). `agents.ts` routes every run to the

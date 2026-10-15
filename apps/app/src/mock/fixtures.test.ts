@@ -288,7 +288,7 @@ describe("seeding", () => {
     expect((db.query("SELECT COUNT(*) AS n FROM findings WHERE stack_finding_id IS NOT NULL").get() as { n: number }).n).toBeGreaterThan(0);
     expect((db.query("SELECT COUNT(*) AS n FROM findings WHERE superseded_by IS NOT NULL").get() as { n: number }).n).toBe(3);
     expect(db.query("SELECT COUNT(*) AS n FROM inbox_hidden").get()).toEqual({ n: 2 });
-    expect(db.query("SELECT COUNT(*) AS n, SUM(read_at IS NULL) AS unread, SUM(seen_at IS NULL) AS unseen FROM notifications").get()).toEqual({ n: 9, unread: 4, unseen: 2 });
+    expect(db.query("SELECT COUNT(*) AS n, SUM(read_at IS NULL) AS unread, SUM(seen_at IS NULL) AS unseen FROM notifications").get()).toEqual({ n: 10, unread: 5, unseen: 3 });
     expect(db.query("SELECT COUNT(*) AS n FROM onboarding").get()).toEqual({ n: 1 });
     // Every stored anchor is either inline-postable or deliberately in the body.
     const bad = db.query("SELECT COUNT(*) AS n FROM findings WHERE anchorable = 1 AND (path IS NULL OR line IS NULL)").get() as { n: number };
@@ -304,4 +304,24 @@ test("demo avatars are generated SVGs with initials", () => {
   expect(svg).toStartWith("<svg");
   expect(svg).toContain(">RV</text>");
   expect(avatarSvg("robin-vale")).toBe(svg);
+});
+
+test("scripted fixes match the fix schema and apply to their PR's head", async () => {
+  const { FIX_SCHEMA, fixPrompt } = await import("../server/prompts/fix");
+  const withFix = F.PRS.filter((p) => p.fix);
+  expect(withFix.length).toBeGreaterThan(0);
+  for (const pr of withFix) {
+    const prompt = fixPrompt({
+      repo: pr.repo,
+      pr: { number: pr.number, title: pr.title, body: pr.body, author: pr.author, headRef: pr.branch, baseRef: pr.base, headSha: "x" },
+      requests: [],
+      diff: F.prChange(pr).diff,
+      diffTruncated: false,
+    });
+    expect(stageOf(FIX_SCHEMA, prompt)).toBe("fix");
+    const t = targetOf(prompt, "/tmp");
+    expect(t?.kind === "pr" && t.pr.number).toBe(pr.number);
+    expectValid(outputFor("fix", t, prompt, FIX_SCHEMA, null).output, FIX_SCHEMA, `${pr.repo}#${pr.number} fix`);
+    expect(() => F.applyEdits(F.prHeadFiles(pr), pr.fix!.edits, `${pr.repo}#${pr.number} fix`)).not.toThrow();
+  }
 });

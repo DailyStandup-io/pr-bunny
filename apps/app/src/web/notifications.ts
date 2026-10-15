@@ -44,7 +44,8 @@ export const EVENT_GROUPS: Array<{ name: string; github?: boolean; items: Array<
       { key: "req", label: "I'm requested as a reviewer", short: "review requests" },
       { key: "assign", label: "I'm assigned a PR", short: "assignments" },
       { key: "stackUpd", label: "A PR in one of my stacks is updated", hint: "New commits or a rebase on any layer", short: "stack updates" },
-      { key: "myReview", label: "My PR gets a review", hint: "Approvals, comments and changes requested", short: "reviews of my PRs" },
+      { key: "myReview", label: "My PR gets a review", hint: "Approvals and comments", short: "reviews of my PRs" },
+      { key: "changesReq", label: "Changes are requested on my PR", hint: "With Fix and Don't fix: the agent makes the changes, you approve before anything is pushed", short: "changes requested" },
     ],
   },
   {
@@ -54,6 +55,7 @@ export const EVENT_GROUPS: Array<{ name: string; github?: boolean; items: Array<
       { key: "deep", label: "Deep review finished", short: "finished reviews" },
       { key: "failed", label: "Review failed or ran out of turns", short: "failed reviews" },
       { key: "changed", label: "A PR changed since I reviewed it", hint: "New commits after your last review", short: "PRs changed since review" },
+      { key: "fixReady", label: "A fix is ready to approve", hint: "The agent finished the changes a reviewer asked for", short: "fixes ready" },
     ],
   },
   {
@@ -73,17 +75,19 @@ export const DEFAULT_EVENTS: Record<NotifyKind, boolean> = {
   assign: true,
   stackUpd: false,
   myReview: true,
+  changesReq: true,
   overview: false,
   deep: true,
   failed: true,
   changed: false,
+  fixReady: true,
   all: true,
   across: true,
   update: true,
 };
 
-/** The five offered in setup. */
-export const SETUP_EVENTS: NotifyKind[] = ["req", "myReview", "deep", "failed", "changed"];
+/** The ones offered in setup. */
+export const SETUP_EVENTS: NotifyKind[] = ["req", "myReview", "changesReq", "deep", "failed", "changed"];
 
 /** A mascot face for a notification (null in builds without the art). */
 export const faceFor = (key: string): string | null => BUNNY_FACES[key as keyof typeof BUNNY_FACES] ?? null;
@@ -182,6 +186,24 @@ export function useFeed(): NotificationFeed | null {
 
 const loadFeed = () => call<NotificationFeed>("/api/notifications").then(feed.set, () => {});
 
+/** Fix / Don't fix on a "changes requested" entry. Fix starts the agent and opens the fix page. */
+export async function fixNotification(id: number) {
+  markLocal(id);
+  const r = await call<{ fixId: number }>(`/api/notifications/${id}/fix`, "POST");
+  navigate(`/fix/${r.fixId}`);
+  return r;
+}
+export async function skipNotification(id: number) {
+  markLocal(id);
+  await call<{ fixId: number }>(`/api/notifications/${id}/skip`, "POST");
+  loadFeed();
+}
+function markLocal(id: number) {
+  const f = feed.get();
+  const was = f?.items.find((i) => i.id === id);
+  if (f) feed.set({ unseen: Math.max(0, f.unseen - (was && !was.seen ? 1 : 0)), items: f.items.map((i) => (i.id === id ? { ...i, seen: true, read: true } : i)) });
+}
+
 export const bell = {
   reload: loadFeed,
   readAll: () => {
@@ -240,14 +262,20 @@ interface Alert {
   face: string;
   id?: number;
   href?: string;
+  /** Buttons on the desktop alert (Chrome, Edge, Arc show them; other browsers just take the click). */
+  actions?: Array<{ action: string; title: string }>;
 }
+
+/** Changes requested on your PR get Fix / Don't fix right on the desktop alert. */
+const actionsFor = (i: AppNotification) => (i.kind === "changesReq" ? [{ action: "fix", title: "Fix" }, { action: "skip", title: "Don't fix" }] : undefined);
 
 let swReg: Promise<ServiceWorkerRegistration | null> = Promise.resolve(null);
 
 async function show(a: Alert): Promise<boolean> {
   if (readPermission() !== "granted") return false;
   const icon = faceFor(a.face) ?? undefined;
-  const options: NotificationOptions = { body: a.body, tag: a.tag, icon, data: { id: a.id ?? null, href: a.href ?? null } };
+  const options: NotificationOptions & { actions?: Alert["actions"] } = { body: a.body, tag: a.tag, icon, data: { id: a.id ?? null, href: a.href ?? null } };
+  if (a.actions) options.actions = a.actions;
   try {
     const reg = await Promise.race([swReg, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
     if (reg) {
@@ -288,7 +316,7 @@ async function flush() {
   lastShown = Date.now();
   if (items.length === 1) {
     const i = items[0]!;
-    await show({ title: i.title, body: i.body, tag: i.tag, face: i.face, id: i.id });
+    await show({ title: i.title, body: i.body, tag: i.tag, face: i.face, id: i.id, actions: actionsFor(i) });
     return;
   }
   await show({ ...bundleText(items), tag: "burst", face: "happy", href: "/" });
@@ -304,7 +332,7 @@ async function deliver(item: AppNotification) {
   const now = Date.now();
   if (!s.bundle || (now - lastShown >= BURST_MS && !flushTimer)) {
     lastShown = now;
-    await show({ title: item.title, body: item.body, tag: item.tag, face: item.face, id: item.id });
+    await show({ title: item.title, body: item.body, tag: item.tag, face: item.face, id: item.id, actions: actionsFor(item) });
     return;
   }
   queue.push(item);
@@ -368,15 +396,21 @@ export function startNotifications() {
     );
     navigator.serviceWorker.addEventListener("message", (e) => {
       if (e.data?.type !== "pb:open") return;
-      if (e.data.id) openNotification(Number(e.data.id));
+      if (e.data.id && e.data.action === "fix") fixNotification(Number(e.data.id)).catch(() => openNotification(Number(e.data.id)));
+      else if (e.data.id && e.data.action === "skip") skipNotification(Number(e.data.id)).catch(() => {});
+      else if (e.data.id) openNotification(Number(e.data.id));
       else if (typeof e.data.href === "string") go(e.data.href);
     });
   }
 
   // Opened from a desktop alert after every tab was closed.
-  const open = new URLSearchParams(location.search).get("open");
+  const q = new URLSearchParams(location.search);
+  const open = q.get("open");
   if (open && /^\d+$/.test(open)) {
     history.replaceState(null, "", location.pathname);
-    openNotification(Number(open));
+    const action = q.get("action");
+    if (action === "fix") fixNotification(Number(open)).catch(() => openNotification(Number(open)));
+    else if (action === "skip") skipNotification(Number(open)).catch(() => {});
+    else openNotification(Number(open));
   }
 }

@@ -1,11 +1,22 @@
 // Command lines of the fake `claude` and `codex` (src/mock/bin). Both parse exactly the arguments
 // PR Bunny passes (buildArgs in src/server/claude.ts, buildCodexArgs in src/server/codex.ts) and
 // stream events in the real formats (`stream-json` / `exec --json`), paced by PR_BUNNY_MOCK_SPEED.
-import { readFileSync, realpathSync } from "node:fs";
-import { plan, resolveJob, saveSession, stepDelay, type Plan, type Session, type Step } from "./agent";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fixEdits, plan, resolveJob, saveSession, stepDelay, type Plan, type Session, type Stage, type Step } from "./agent";
+import { applyEdits, type Target } from "./fixtures";
 import { VIEWER } from "./world/people";
 
 const write = (ev: unknown) => process.stdout.write(`${JSON.stringify(ev)}\n`);
+
+/** A fix really changes the checkout (the app diffs it afterwards). */
+function applyFix(stage: Stage, target: Target | null, cwd: string) {
+  const edits = fixEdits(stage, target);
+  if (!edits.length) return;
+  const files = new Map<string, string>();
+  for (const e of edits) if (!e.add && existsSync(join(cwd, e.path))) files.set(e.path, readFileSync(join(cwd, e.path), "utf8"));
+  for (const [path, text] of applyEdits(files, edits, "mock fix")) writeFileSync(join(cwd, path), text);
+}
 
 /** Exit promptly on Stop: PR Bunny SIGTERMs the agent and expects it gone well within 5 s. */
 function exitOnSignals(onExit?: () => void) {
@@ -95,6 +106,7 @@ export async function claudeMain(args: string[]): Promise<number> {
     saveSession(current);
   }
   await Bun.sleep(stepDelay(p, p.steps.length, key));
+  applyFix(stage, target, cwd);
   if (schema) {
     if (turns + 1 > maxTurns) return finishClaude(p, current, started, turns, true);
     turns++;
@@ -143,7 +155,9 @@ function codexCommand(step: Extract<Step, { kind: "tool" }>, cwd: string): strin
   const cmd =
     step.tool === "Read"
       ? `sed -n '1,200p' ${rel(step.input.file_path)}`
-      : step.tool === "Grep"
+      : step.tool === "Edit"
+        ? `apply_patch ${rel(step.input.file_path)}`
+        : step.tool === "Grep"
         ? `rg -n ${shellQuote(String(step.input.pattern))} ${rel(step.input.path) || "."}`
         : step.tool === "Glob"
           ? `rg --files -g ${shellQuote(String(step.input.pattern))}`
@@ -194,6 +208,7 @@ export async function codexMain(args: string[]): Promise<number> {
     saveSession(current);
   }
   await Bun.sleep(stepDelay(p, p.steps.length, key));
+  applyFix(stage, target, cwd);
   const text = schema ? JSON.stringify(fillNulls(p.output, schema)) : p.text;
   write({ type: "item.completed", item: { id: `item_${item}`, type: "agent_message", text } });
   write({ type: "turn.completed", usage: { input_tokens: p.usage.input, cached_input_tokens: p.usage.cacheRead, output_tokens: p.usage.output } });

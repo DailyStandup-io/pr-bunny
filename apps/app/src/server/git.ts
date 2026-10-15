@@ -72,6 +72,79 @@ export function prepareWorktree(
   });
 }
 
+/**
+ * A checkout for a fix (src/server/fix.ts): the PR head, detached, at `fix-<id>`, where the agent
+ * may edit. Like prepareWorktree, it fetches the PR head first so the commit is in our clone.
+ */
+export function prepareFixWorktree(opts: { fixId: number; owner: string; repo: string; prNumber: number; headSha: string }, log: (m: string) => void): Promise<{ path: string; clone: string }> {
+  return withRepoLock(`${opts.owner}/${opts.repo}`, async () => {
+    const clone = await ensureClone(opts.owner, opts.repo, log);
+    log(`Fetching PR #${opts.prNumber}`);
+    await git(clone, ["fetch", "--quiet", "--force", "origin", `+refs/pull/${opts.prNumber}/head:refs/rp/pr-${opts.prNumber}`]);
+    const path = fixWorktreePath(opts.owner, opts.repo, opts.fixId);
+    if (existsSync(path)) await removeWorktreeUnlocked(clone, path);
+    mkdirSync(join(WORKTREES_DIR, opts.owner, opts.repo), { recursive: true });
+    log(`Checking out ${opts.headSha.slice(0, 8)}`);
+    await git(clone, ["worktree", "add", "--detach", "--force", path, opts.headSha]);
+    return { path, clone };
+  });
+}
+
+export const fixWorktreePath = (owner: string, repo: string, fixId: number) => join(WORKTREES_DIR, owner, repo, `fix-${fixId}`);
+
+/** Everything the agent changed in a fix checkout, staged, as a binary patch plus per-file stats. */
+export async function stagedChanges(worktree: string): Promise<{ diff: string; files: Array<{ path: string; additions: number; deletions: number }> }> {
+  await git(worktree, ["add", "-A"]);
+  const diff = (await $`git diff --cached --binary`.cwd(worktree).quiet()).stdout.toString();
+  const numstat = await git(worktree, ["diff", "--cached", "--numstat"]);
+  const files = numstat
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      const [a, d, ...p] = l.split("\t");
+      return { path: p.join("\t"), additions: Number(a) || 0, deletions: Number(d) || 0 };
+    });
+  return { diff, files };
+}
+
+/**
+ * Approving a fix: a fresh checkout of the PR head, the saved patch applied and committed, then
+ * pushed to the PR branch (a plain push: if the branch moved on GitHub, git refuses and nothing
+ * changes). Returns the new commit. Only ever called from the confirmed Approve click.
+ */
+export async function commitAndPush(
+  opts: { fixId: number; owner: string; repo: string; prNumber: number; headSha: string; branch: string; diff: string; message: string; identity: { name: string; email: string } | null },
+  log: (m: string) => void,
+): Promise<string> {
+  const { path, clone } = await prepareFixWorktree(opts, log);
+  try {
+    const patch = join(path, ".git-rp-fix.patch");
+    await Bun.write(patch, opts.diff);
+    await git(path, ["apply", "--index", "--whitespace=nowarn", patch]);
+    rmSync(patch, { force: true });
+    log("Committing");
+    const identity = opts.identity ? ["-c", `user.name=${opts.identity.name}`, "-c", `user.email=${opts.identity.email}`] : [];
+    await git(path, [...identity, "commit", "-q", "--no-verify", "-m", opts.message]);
+    const sha = await git(path, ["rev-parse", "HEAD"]);
+    log(`Pushing to ${opts.branch}`);
+    const res = await $`git push --quiet origin ${`${sha}:refs/heads/${opts.branch}`}`.cwd(path).env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).quiet().nothrow();
+    if (res.exitCode !== 0) {
+      const err = res.stderr.toString().trim();
+      throw new Error(/rejected|non-fast-forward|fetch first/i.test(err) ? `${opts.branch} moved on GitHub since this fix was made. Run the fix again on the new commits.` : `Push failed: ${err}`);
+    }
+    return sha;
+  } finally {
+    await withRepoLock(`${opts.owner}/${opts.repo}`, () => removeWorktreeUnlocked(clone, path));
+  }
+}
+
+/** The committer identity git would use in our clone (the user's global config), or null if none is set. */
+export async function gitIdentity(cwd: string): Promise<{ name: string; email: string } | null> {
+  const name = (await $`git config user.name`.cwd(cwd).quiet().nothrow()).stdout.toString().trim();
+  const email = (await $`git config user.email`.cwd(cwd).quiet().nothrow()).stdout.toString().trim();
+  return name && email ? { name, email } : null;
+}
+
 async function removeWorktreeUnlocked(clone: string, path: string) {
   await $`git worktree remove --force ${path}`.cwd(clone).quiet().nothrow();
   rmSync(path, { recursive: true, force: true });
