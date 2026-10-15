@@ -60,14 +60,22 @@ export async function startSelfPr(ref: PrRef, known?: PrView, deep = false): Pro
 
 /**
  * Starts (or reopens) a self-review and kicks off its overview in the background. With `deep`, the
- * deep review follows the overview; a reopened review whose overview is already in starts it now.
+ * deep review follows the overview; a reopened review whose overview is already in starts it now,
+ * and a stopped one is resumed.
  */
-export async function startSelfReview(input: StartSelf): Promise<{ id: number; reused: boolean }> {
+export async function startSelfReview(input: StartSelf): Promise<{ id: number; reused: boolean; resumed?: boolean }> {
   const out = await startSelf(input);
-  if (input.deep && out.reused) {
-    markRead(out.id);
-    await startQueuedDeep(out.id);
+  const row = out.reused && input.deep ? getRow(out.id) : null;
+  // Only our own self-review: a `--pr` start can join a peer review of the PR that's already starting.
+  if (row?.mode !== "self") return out;
+  markRead(out.id);
+  if (row.phase === "cancelled") {
+    // Stopped earlier: pick it up where it stopped, as Resume does.
+    const { resumeReview } = await import("./tidy"); // tidy.ts imports deep.ts, which imports reviews.ts
+    await resumeReview(out.id);
+    return { ...out, resumed: true };
   }
+  await startQueuedDeep(out.id);
   return out;
 }
 

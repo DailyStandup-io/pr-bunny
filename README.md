@@ -151,7 +151,7 @@ bunny review my-branch       # another branch of this checkout
 bunny review --base develop  # compare against another branch
 bunny review --committed     # leave uncommitted files out
 bunny review --pr 1490       # one of your open PRs
-bunny review --pr 1490,1491  # several PRs at once; they review in parallel
+bunny review --pr 1490,1491  # up to 5 PRs at once; they review in parallel
 bunny review --deep          # go straight on to the in-depth review after the overview
 bunny review --rerun         # after fixing, check again
 ```

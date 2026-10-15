@@ -1,7 +1,7 @@
 // "I've read it" (or `bunny review --deep`) while the overview is still running only sets read_at;
 // the deep review must start once the overview is in. Several reviews do this at once, so none
 // waits on another.
-import { afterAll, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import { findPr } from "../mock/fixtures";
 
 const started: number[] = [];
@@ -25,7 +25,8 @@ afterAll(() => {
 });
 
 const { db } = await import("./db/db");
-const { getRow, localPrView, markRead, runRecon } = await import("./reviews");
+const { getRow, localPrView, markRead, runRecon, startOnce } = await import("./reviews");
+const { startSelfReview } = await import("./self");
 const { makeReview } = await import("../mock/factories");
 
 const scan = (id: number) => {
@@ -48,4 +49,39 @@ test("an unread review stops at the overview", async () => {
   await scan(id);
   expect(started).toEqual([]);
   expect((db.query("SELECT phase FROM reviews WHERE id = ?").get(id) as { phase: string }).phase).toBe("recon_ready");
+});
+
+describe("`bunny review --pr n --deep` on a review that already exists", () => {
+  const mine = findPr("quokka-labs/api", 240)!;
+  const peer = findPr("quokka-labs/api", 231)!;
+
+  test("a stopped self-review with its overview in resumes the deep review", async () => {
+    started.length = 0;
+    const id = makeReview({ pr: mine, mode: "self", phase: "cancelled", runs: [], readMinutesAgo: null });
+    const out = await startSelfReview({ repo: mine.repo, pr: mine.number, deep: true });
+    expect(out).toMatchObject({ id, reused: true, resumed: true });
+    expect(started).toEqual([id]);
+    expect(getRow(id)!.read_at).not.toBeNull();
+  });
+
+  test("a self-review whose overview is in starts the deep review now", async () => {
+    started.length = 0;
+    db.run("UPDATE reviews SET cleared_at = datetime('now') WHERE mode = 'self'");
+    const id = makeReview({ pr: mine, mode: "self", phase: "recon_ready", runs: [], readMinutesAgo: null });
+    const out = await startSelfReview({ repo: mine.repo, pr: mine.number, deep: true });
+    expect(out).toMatchObject({ id, reused: true });
+    expect(started).toEqual([id]);
+  });
+
+  test("a peer review it joins is never marked read or started", async () => {
+    started.length = 0;
+    const id = makeReview({ pr: peer, mode: "peer", phase: "recon_ready", runs: [], readMinutesAgo: null });
+    // A peer start of the PR already in flight: the self start joins it and gets its id back.
+    const peerStart = startOnce({ owner: "quokka-labs", repo: "api", number: peer.number }, async () => (await Bun.sleep(20), id));
+    const out = await startSelfReview({ repo: peer.repo, pr: peer.number, deep: true });
+    await peerStart;
+    expect(out.id).toBe(id);
+    expect(getRow(id)!.read_at).toBeNull();
+    expect(started).toEqual([]);
+  });
 });

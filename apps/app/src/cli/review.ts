@@ -16,7 +16,7 @@ const API = `http://127.0.0.1:${PORT}`;
 const USAGE = `usage: bunny review [branch] [--base <branch>] [--committed] [--pr <number>[,<number>...]] [--deep] [--rerun] [--stack] [--no-open]
 
 Self-reviews your work in PR Bunny before anyone else sees it. Run it inside a checkout.
-Repeat --pr (or give a comma list) to start several PRs at once; they review in parallel.
+Repeat --pr (or give a comma list) to start up to 5 PRs at once; they review in parallel.
 --deep goes straight on to the in-depth review when the overview is in.`;
 
 const NOT_RUNNING = `PR Bunny isn't running on port ${PORT}. Start it with \`bunny service install\` (or \`bunny setup\`).`;
@@ -34,6 +34,9 @@ function fail(msg: string, code = 1): never {
   console.error(`bunny: ${msg}`);
   process.exit(code);
 }
+
+/** PRs one `bunny review` starts together. Each runs its own overview and deep review agent. */
+export const MAX_PRS = 5;
 
 export interface ReviewOpts {
   branch?: string;
@@ -72,6 +75,7 @@ export function parseReviewArgs(rest: string[]): ReviewOpts {
     else if (!opts.branch) opts.branch = a;
     else throw new Error(`unexpected argument "${a}".`);
   }
+  if (opts.prs.length > MAX_PRS) throw new Error(`At most ${MAX_PRS} PRs at once: each runs its own agent, and more will hit your plan's rate limits.`);
   if (opts.prs.length > 1) {
     const clash = opts.stack ? "--stack" : opts.rerun ? "--rerun" : opts.branch ? "a branch" : null;
     if (clash) throw new Error(`${clash} works on one PR at a time; pass a single --pr.`);
@@ -91,17 +95,19 @@ export async function review(rest: string[]) {
     fail((e as Error).message);
   }
 
-  async function post(path: string, body: unknown): Promise<any> {
+  /** POSTs to the server; throws with the message to show. */
+  async function request(path: string, body: unknown): Promise<any> {
     let res: Response;
     try {
       res = await fetch(`${API}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     } catch {
-      fail(NOT_RUNNING);
+      throw new Error(NOT_RUNNING);
     }
     const data: any = await res.json().catch(() => ({}));
-    if (!res.ok) fail(data.error ?? `${res.status} ${res.statusText}`);
+    if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
     return data;
   }
+  const post = (path: string, body: unknown) => request(path, body).catch((e: Error) => fail(e.message));
   const open = (url: string) => opts.open && Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
 
   const localPath = process.cwd();
@@ -114,18 +120,25 @@ export async function review(rest: string[]) {
     return;
   }
   const deepNote = opts.deep ? " (deep review follows the overview)" : "";
+  const said = (out: { reused?: boolean; resumed?: boolean }) =>
+    out.resumed ? "was stopped; resuming it" : out.reused ? (opts.deep ? "already reviewed; deep review requested" : "already reviewed") : `started${deepNote}`;
   if (opts.prs.length > 1) {
-    // All at once: the server runs every review in parallel.
+    // All at once: the server runs every review in parallel. One PR failing doesn't hide the others.
     const base = (await health()).url;
-    const outs = await Promise.all(
-      opts.prs.map((pr) => post("/api/self-reviews", { localPath, base: opts.base, includeDirty: !opts.committed, pr, deep: opts.deep })),
+    const results = await Promise.allSettled(
+      opts.prs.map((pr) => request("/api/self-reviews", { localPath, base: opts.base, includeDirty: !opts.committed, pr, deep: opts.deep })),
     );
-    console.log(`Started ${opts.prs.length} self-reviews${deepNote}:`);
-    outs.forEach((out, i) => {
-      const url = `${base}/review/${out.id}`;
-      console.log(`  #${opts.prs[i]} ${out.reused ? "already reviewed" : "started"} → ${url}`);
+    console.log(`Self-reviewing ${opts.prs.length} PRs in parallel:`);
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        console.error(`  #${opts.prs[i]} failed: ${(r.reason as Error).message}`);
+        return;
+      }
+      const url = `${base}/review/${r.value.id}`;
+      console.log(`  #${opts.prs[i]} ${said(r.value)} → ${url}`);
       open(url);
     });
+    if (results.some((r) => r.status === "rejected")) process.exit(1);
     return;
   }
   const out = opts.rerun
@@ -133,8 +146,13 @@ export async function review(rest: string[]) {
     : await post("/api/self-reviews", { localPath, branch: opts.branch, base: opts.base, includeDirty: !opts.committed, pr: opts.prs[0], deep: opts.deep });
 
   const url = `${(await health()).url}/review/${out.id}`;
-  console.log(opts.rerun ? `Re-running → ${url}` : out.reused ? `Already reviewed; opening it → ${url}` : `Self-review started${deepNote} → ${url}`);
-  if (out.reused && !opts.rerun) console.log("After fixing, run `bunny review --rerun` to check again.");
+  console.log(
+    opts.rerun ? `Re-running → ${url}`
+    : out.resumed ? `Self-review was stopped; resuming it → ${url}`
+    : out.reused ? `Already reviewed${opts.deep ? "; deep review requested" : ""}; opening it → ${url}`
+    : `Self-review started${deepNote} → ${url}`,
+  );
+  if (out.reused && !out.resumed && !opts.rerun) console.log("After fixing, run `bunny review --rerun` to check again.");
   open(url);
 }
 
