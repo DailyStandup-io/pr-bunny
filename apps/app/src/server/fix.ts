@@ -2,12 +2,12 @@
 // checkout of the PR head (never your working copy) with edit tools scoped to that checkout, and
 // saves the resulting diff for you to read. Approve commits it and pushes to the PR branch; Decline
 // throws it away. The push is the only GitHub write here, and only from the confirmed click.
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { FixDetail, FixEvent, FixFile, FixRequest, FixState } from "../shared/types";
 import { parseDiff } from "./anchors";
 import { agentName, runAgent } from "./agents";
 import { clonePath, commitAndPush, gitIdentity, prepareFixWorktree, removeWorktree, stagedChanges } from "./git";
-import { ghJson, prDiff, prReviewComments, prReviews, prView, viewer, type PrRef } from "./gh";
+import { ghJson, prDiff, prReviewComments, prReviews, prView, viewer, type PrRef, type RawPrReview } from "./gh";
 import { publish } from "./live";
 import { FIX_SCHEMA, fixPrompt, fixSystem, type FixOutput } from "./prompts/fix";
 import { db } from "./db/db";
@@ -94,16 +94,7 @@ export function onFixState(fn: (id: number, state: FixState) => void) {
 export async function loadRequests(ref: PrRef): Promise<FixRequest[]> {
   const me = (await viewer().catch(() => "")).toLowerCase();
   const [reviews, comments] = await Promise.all([prReviews(ref), prReviewComments(ref).catch(() => [])]);
-  const latest = new Map<string, (typeof reviews)[number]>();
-  for (const r of reviews) {
-    if (!r.author || r.author.toLowerCase() === me || r.state === "PENDING" || r.state === "DISMISSED") continue;
-    // COMMENTED after a CHANGES_REQUESTED doesn't lift the request; APPROVED does.
-    if (r.state === "COMMENTED" && latest.get(r.author)?.state === "CHANGES_REQUESTED") continue;
-    latest.set(r.author, r);
-  }
-  return [...latest.values()]
-    .filter((r) => r.state === "CHANGES_REQUESTED")
-    .map((r) => ({
+  return standingRequests(reviews, me).map((r) => ({
       id: r.id,
       author: r.author,
       body: r.body,
@@ -115,6 +106,39 @@ export async function loadRequests(ref: PrRef): Promise<FixRequest[]> {
     }));
 }
 
+/**
+ * Each reviewer's request for changes that GitHub still counts, oldest first. A later COMMENTED
+ * review doesn't lift it; APPROVED does, and so does a dismissal (of the review that asked).
+ */
+export function standingRequests(reviews: RawPrReview[], me: string): RawPrReview[] {
+  const latest = new Map<string, RawPrReview>();
+  for (const r of [...reviews].sort((a, b) => a.submittedAt.localeCompare(b.submittedAt))) {
+    const who = r.author.toLowerCase();
+    if (!who || who === me.toLowerCase() || r.state === "PENDING") continue;
+    if (r.state === "DISMISSED") {
+      latest.delete(who);
+      continue;
+    }
+    if (r.state === "COMMENTED" && latest.get(who)?.state === "CHANGES_REQUESTED") continue;
+    latest.set(who, r);
+  }
+  return [...latest.values()].filter((r) => r.state === "CHANGES_REQUESTED");
+}
+
+/**
+ * The PR as it is on GitHub now, plus the checks every fix step repeats: still open, yours, and
+ * not from a fork. A fork PR's branch lives in another repo; pushing to `origin` would land the
+ * commit on the base repo instead, so PR Bunny refuses those.
+ */
+async function checkedPr(ref: PrRef) {
+  const pr = await prView(ref);
+  if (pr.state !== "OPEN") throw new Error(`#${pr.number} is ${pr.state.toLowerCase()} now.`);
+  if (!isMine(pr.author, await viewer().catch(() => null))) throw new Error(`#${pr.number} was opened by ${pr.author}. PR Bunny only fixes your own PRs.`);
+  const head = await ghJson<{ isCrossRepository?: boolean | null }>(["pr", "view", String(ref.number), "-R", `${ref.owner}/${ref.repo}`, "--json", "isCrossRepository"]);
+  if (head.isCrossRepository !== false) throw new Error(`#${pr.number} comes from a fork. PR Bunny only fixes PRs whose branch is in ${ref.owner}/${ref.repo}.`);
+  return pr;
+}
+
 // ---------- rows ----------
 
 /** The fix for this PR that's still live (not settled), if any. */
@@ -122,7 +146,7 @@ function liveFixFor(ref: PrRef): FixRow | null {
   return db
     .query(
       `SELECT f.*, r.owner, r.name AS repo FROM fixes f JOIN repos r ON r.id = f.repo_id
-       WHERE r.owner = ? AND r.name = ? AND f.pr_number = ? AND f.state IN ('new', 'running', 'ready') ORDER BY f.id DESC LIMIT 1`,
+       WHERE r.owner = ? AND r.name = ? AND f.pr_number = ? AND f.state IN ('new', 'running', 'ready', 'pushing') ORDER BY f.id DESC LIMIT 1`,
     )
     .get(ref.owner, ref.repo, ref.number) as FixRow | null;
 }
@@ -137,10 +161,7 @@ export async function ensureFix(ref: PrRef, opts: { notificationId?: number } = 
     link(opts.notificationId, existing.id);
     return existing;
   }
-  const pr = await prView(ref);
-  const me = await viewer().catch(() => null);
-  if (!isMine(pr.author, me)) throw new Error(`#${pr.number} was opened by ${pr.author}. PR Bunny only fixes your own PRs.`);
-  if (pr.state !== "OPEN") throw new Error(`#${pr.number} is already ${pr.state.toLowerCase()}.`);
+  const pr = await checkedPr(ref);
   const requests = await loadRequests(ref);
   const repoId = upsertRepo(ref.owner, ref.repo);
   const { id } = db
@@ -200,6 +221,7 @@ export function startFix(id: number): FixRow {
   if (!row) throw new Error("Fix not found");
   if (running.has(id)) return row;
   if (row.state === "running") throw new Error("This fix is already running.");
+  if (row.state === "pushing") throw new Error("This fix is being pushed.");
   if (row.state === "pushed") throw new Error("This fix was already pushed.");
   const ctrl = new AbortController();
   running.set(id, ctrl);
@@ -236,9 +258,7 @@ async function runFix(row: FixRow, signal: AbortSignal) {
   const log = (text: string) => progress(id, text);
 
   // Fresh look at the PR: the head may have moved and the reviewer may have said more since.
-  const pr = await prView(ref);
-  if (pr.state !== "OPEN") throw new Error(`#${pr.number} is ${pr.state.toLowerCase()} now.`);
-  if (!isMine(pr.author, await viewer().catch(() => null))) throw new Error(`#${pr.number} was opened by ${pr.author}. PR Bunny only fixes your own PRs.`);
+  const pr = await checkedPr(ref);
   const requests = await loadRequests(ref);
   if (!requests.length) throw new Error("Nobody is requesting changes on this PR any more.");
   db.run("UPDATE fixes SET title = ?, head_ref = ?, base_ref = ?, head_sha = ?, requests_json = ? WHERE id = ?", [pr.title, pr.headRefName, pr.baseRefName, pr.headRefOid, JSON.stringify(requests), id]);
@@ -288,10 +308,15 @@ async function runFix(row: FixRow, signal: AbortSignal) {
   if (res.hitTurnLimit) throw new Error(`${agentName()} used all ${settings.reviewMaxTurns} of its turns before finishing. Run it again, or raise the review turn limit in Settings.`);
   if (res.isError || !res.structured) throw new Error(res.error ?? "The fix returned nothing");
 
-  const { diff, files } = await stagedChanges(wt.path);
-  // The checkout has done its job: the diff is what's kept (approving applies it to a fresh checkout).
-  await removeWorktree(row.owner, row.repo, wt.path).catch(() => {});
-  db.run("UPDATE fixes SET worktree_path = NULL WHERE id = ?", [id]);
+  let changes: Awaited<ReturnType<typeof stagedChanges>>;
+  try {
+    changes = await stagedChanges(wt.path, wt.gitDir);
+  } finally {
+    // The checkout has done its job: the diff is what's kept (approving applies it to a fresh checkout).
+    await removeWorktree(row.owner, row.repo, wt.path).catch(() => {});
+    db.run("UPDATE fixes SET worktree_path = NULL WHERE id = ?", [id]);
+  }
+  const { diff, files } = changes;
   const out = res.structured;
   if (!files.length) {
     db.run("UPDATE fixes SET summary = ?, commit_message = ?, addressed_json = ?, not_addressed_json = ? WHERE id = ?", [out.summary, out.commitMessage, JSON.stringify(out.addressed ?? []), JSON.stringify(out.notAddressed ?? []), id]);
@@ -310,22 +335,20 @@ async function runFix(row: FixRow, signal: AbortSignal) {
   setState(id, "ready");
 }
 
-/** Edit tools scoped to one checkout. `dontAsk` denies anything not listed here. */
+/**
+ * Edit tools scoped to one checkout. `dontAsk` denies anything not listed here. No Bash at all: even
+ * "read-only" git commands can write files (`git log --output=<path>`), and the PR's diff and the
+ * reviewer's comments are in the prompt already.
+ */
 export function writeTools(worktree: string) {
   return {
-    tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
+    tools: ["Read", "Grep", "Glob", "Edit", "Write"],
     permissionMode: "dontAsk" as const,
     write: true,
     allowedTools: [
       `Read(/${worktree}/**)`, // leading "//" = absolute path in permission rules
       `Edit(/${worktree}/**)`,
       `Write(/${worktree}/**)`,
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(git blame:*)",
-      "Bash(git status:*)",
-      "Bash(git ls-files:*)",
     ],
   };
 }
@@ -346,26 +369,46 @@ export function cleanMessage(m: string): string {
  * Refuses if the PR moved on GitHub since (the diff may not apply, and you haven't seen the new
  * commits). Only from the confirmed click.
  */
-export async function approveFix(id: number, input: { commitMessage: string; headSha: string }): Promise<FixRow> {
+/** Identifies the exact diff a page showed, so Approve pushes only what was seen. */
+export const diffHash = (diff: string | null) => (diff ? createHash("sha256").update(diff).digest("hex") : "");
+
+const pushing = new Set<number>();
+
+export async function approveFix(id: number, input: { commitMessage: string; headSha: string; diffHash: string }): Promise<FixRow> {
   const row = getFixRow(id);
   if (!row) throw new Error("Fix not found");
-  if (row.state !== "ready" || !row.diff_text || !row.head_sha || !row.head_ref) throw new Error("This fix isn't waiting for approval.");
-  if (input.headSha !== row.head_sha) throw new Error("This page is out of date. Reload and look at the fix again.");
-  const message = cleanMessage(input.commitMessage);
+  if (row.state === "pushing") throw new Error("This fix is already being pushed.");
+  if (row.state !== "ready" || !row.diff_text || !row.head_sha) throw new Error("This fix isn't waiting for approval.");
+  if (input.headSha !== row.head_sha || input.diffHash !== diffHash(row.diff_text)) throw new Error("This page is out of date. Reload and look at the fix again.");
+  // The message is yours as typed (a Signed-off-by you wrote stays); only the agent's suggestion was cleaned.
+  const message = input.commitMessage.trim();
   if (!message) throw new Error("Write a commit message first.");
-  const pr = await prView(refOf(row));
-  if (pr.state !== "OPEN") throw new Error(`#${pr.number} is ${pr.state.toLowerCase()} now.`);
-  if (pr.headRefOid !== row.head_sha) throw new Error(`New commits were pushed to ${row.head_ref} since this fix was made. Run the fix again on the new commits.`);
-  const me = await viewer().catch(() => null);
-  if (!isMine(pr.author, me)) throw new Error(`#${pr.number} was opened by ${pr.author}, so PR Bunny won't push to it.`);
-  const identity = (await gitIdentity(clonePath(row.owner, row.repo))) ?? (await fallbackIdentity());
-  const sha = await commitAndPush(
-    { fixId: id, owner: row.owner, repo: row.repo, prNumber: row.pr_number, headSha: row.head_sha, branch: row.head_ref, diff: row.diff_text, message, identity },
-    (text) => progress(id, text),
-  );
-  db.run("UPDATE fixes SET commit_message = ?, pushed_sha = ?, decided_at = datetime('now') WHERE id = ?", [message, sha, id]);
-  setState(id, "pushed");
-  return getFixRow(id)!;
+  // Claim it before any await, so a second click or tab can't push (or decline) alongside this one.
+  if (!db.query("UPDATE fixes SET state = 'pushing' WHERE id = ? AND state = 'ready' RETURNING id").get(id)) throw new Error("This fix isn't waiting for approval.");
+  pushing.add(id);
+  setState(id, "pushing");
+  try {
+    const pr = await checkedPr(refOf(row));
+    if (pr.headRefOid !== row.head_sha) throw new Error(`New commits were pushed to ${pr.headRefName} since this fix was made. Run the fix again on the new commits.`);
+    const sha = await commitAndPush(
+      { fixId: id, owner: row.owner, repo: row.repo, prNumber: row.pr_number, headSha: row.head_sha, branch: pr.headRefName, diff: row.diff_text, message, identity: await commitIdentity(row) },
+      (text) => progress(id, text),
+    );
+    db.run("UPDATE fixes SET commit_message = ?, head_ref = ?, pushed_sha = ?, decided_at = datetime('now') WHERE id = ?", [message, pr.headRefName, sha, id]);
+    setState(id, "pushed");
+    return getFixRow(id)!;
+  } catch (e) {
+    setState(id, "ready", null);
+    throw e;
+  } finally {
+    pushing.delete(id);
+  }
+}
+
+/** The user's identity from their own checkout of the repo (so includeIf applies), else global config, else GitHub's noreply. */
+async function commitIdentity(row: FixRow): Promise<{ name: string; email: string } | null> {
+  const local = (db.query("SELECT local_path AS p FROM repos WHERE id = ?").get(row.repo_id) as { p: string | null } | null)?.p;
+  return (local ? await gitIdentity(local) : null) ?? (await gitIdentity(clonePath(row.owner, row.repo))) ?? (await fallbackIdentity());
 }
 
 /** Without a git identity on this machine, commit as the GitHub account (its noreply address). */
@@ -423,6 +466,7 @@ export function getFix(id: number): FixDetail | null {
     notAddressed: r.not_addressed_json ? JSON.parse(r.not_addressed_json) : [],
     files: filesOf(r),
     pushedSha: r.pushed_sha,
+    diffHash: diffHash(r.diff_text),
     createdAt: r.created_at,
     finishedAt: r.finished_at,
     run: r.model ? { model: r.model, costUsd: r.cost_usd, durationMs: r.duration_ms, inputTokens: r.input_tokens, outputTokens: r.output_tokens } : null,
@@ -433,14 +477,9 @@ export function getFix(id: number): FixDetail | null {
 /** Fixes that were running when the server restarted can't finish: say so. */
 export function recoverInterruptedFixes() {
   db.run("UPDATE fixes SET state = 'failed', error = ?, finished_at = datetime('now') WHERE state = 'running'", ["Interrupted: the server restarted while this was running. Run it again."]);
+  // A push cut off by a restart: back to waiting. If it did reach GitHub, Approve refuses (the head moved).
+  db.run("UPDATE fixes SET state = 'ready', error = NULL WHERE state = 'pushing'");
 }
 
-/** Paths of fix checkouts the cleanup must leave alone (a run in progress). */
-export function runningFixWorktrees(): Set<string> {
-  const out = new Set<string>();
-  for (const id of running.keys()) {
-    const p = (db.query("SELECT worktree_path AS p FROM fixes WHERE id = ?").get(id) as { p: string | null } | null)?.p;
-    if (p && existsSync(p)) out.add(p);
-  }
-  return out;
-}
+/** Is fix `id` using its checkout right now (running, or pushing)? Asked live by the hourly cleanup. */
+export const isFixBusy = (id: number) => running.has(id) || pushing.has(id);

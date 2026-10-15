@@ -142,7 +142,7 @@ export const api = {
   startFix: (id: number) => post<FixDetail>(`/api/fixes/${id}/start`),
   stopFix: (id: number) => post<{ stopping: boolean }>(`/api/fixes/${id}/stop`),
   skipFix: (id: number) => post<FixDetail>(`/api/fixes/${id}/skip`),
-  approveFix: (id: number, input: { commitMessage: string; headSha: string }) => post<FixDetail>(`/api/fixes/${id}/approve`, input),
+  approveFix: (id: number, input: { commitMessage: string; headSha: string; diffHash: string }) => post<FixDetail>(`/api/fixes/${id}/approve`, input),
   declineFix: (id: number) => post<FixDetail>(`/api/fixes/${id}/decline`),
 };
 

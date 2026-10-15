@@ -16,7 +16,8 @@ self.addEventListener("notificationclick", (e) => {
       tab.postMessage({ type: "pb:open", id: data.id ?? null, href: data.href ?? null, action: e.action || null });
       return;
     }
-    const url = data.id ? "/?open=" + encodeURIComponent(data.id) + (e.action ? "&action=" + encodeURIComponent(e.action) : "") : data.href && data.href.startsWith("/") ? data.href : "/";
+    // No tab to tell: just open it. Fix / Don't fix only run from a tab (never from a URL any site could link).
+    const url = data.id ? "/?open=" + encodeURIComponent(data.id) : data.href && data.href.startsWith("/") ? data.href : "/";
     await self.clients.openWindow(url);
   })());
 });

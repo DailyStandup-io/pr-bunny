@@ -285,7 +285,7 @@ export interface RawReviewComment {
   reviewId: number | null;
   author: string;
   path: string;
-  /** Line in the head at the time of the comment; null when the comment is outdated or file-level. */
+  /** Line in the PR's current head; null when the comment is outdated (its code changed since) or file-level. */
   line: number | null;
   body: string;
   diffHunk: string | null;
@@ -301,7 +301,8 @@ export async function prReviewComments({ owner, repo, number }: PrRef): Promise<
     reviewId: c.pull_request_review_id ?? null,
     author: c.user?.login ?? "",
     path: c.path ?? "",
-    line: typeof c.line === "number" ? c.line : typeof c.original_line === "number" ? c.original_line : null,
+    // original_line points into an older commit, so it's no use against the current head.
+    line: typeof c.line === "number" ? c.line : null,
     body: c.body ?? "",
     diffHunk: c.diff_hunk ?? null,
     url: c.html_url ?? "",

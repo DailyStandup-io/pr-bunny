@@ -95,7 +95,7 @@ export function FixPage({ id }: { id: number }) {
         />
       )}
 
-      {(fix.state === "ready" || fix.state === "pushed") && <Result fix={fix} agent={agent} onChange={act} />}
+      {(fix.state === "ready" || fix.state === "pushing" || fix.state === "pushed") && <Result fix={fix} agent={agent} onChange={act} />}
 
       {fix.state !== "running" && lines.length > 0 && fix.state !== "pushed" && <ProgressFeed title="What happened" lines={lines} active={false} />}
 
@@ -144,6 +144,8 @@ function Status({ fix, agent, who, onChange }: { fix: FixDetail; agent: string; 
         ? ["auto_fix_high", "var(--accent)", `${agent} is on it`, "Nothing is pushed until you approve. Stop throws the work away."]
         : fix.state === "ready"
           ? ["rate_review", "var(--accent)", "Ready for you to look at", "Read the diff below. Approve commits it and pushes it to the PR branch; Decline throws it away."]
+          : fix.state === "pushing"
+            ? ["upload", "var(--accent)", `Pushing to ${fix.headRef}`, "Committing the diff you approved and pushing it to the PR."]
           : fix.state === "pushed"
             ? ["check_circle", "var(--add)", `Pushed to ${fix.headRef}`, `Commit ${fix.pushedSha?.slice(0, 8) ?? ""} is on the PR. Re-request a review on GitHub when you're ready.`]
             : fix.state === "declined"
@@ -195,14 +197,14 @@ function Result({ fix, agent, onChange }: { fix: FixDetail; agent: string; onCha
   const [step, setStep] = useState<"idle" | "confirm" | "pushing" | "declining">("idle");
   const [error, setError] = useState<string | null>(null);
   useEffect(() => setMessage(fix.commitMessage ?? ""), [fix.commitMessage]);
-  const pending = fix.state === "ready";
+  const pending = fix.state === "ready" || fix.state === "pushing";
   const adds = fix.files.reduce((n, f) => n + f.additions, 0);
   const dels = fix.files.reduce((n, f) => n + f.deletions, 0);
 
   const approve = () => {
     setStep("pushing");
     setError(null);
-    onChange(api.approveFix(fix.id, { commitMessage: message, headSha: fix.headSha }))
+    onChange(api.approveFix(fix.id, { commitMessage: message, headSha: fix.headSha, diffHash: fix.diffHash }))
       .catch((e) => setError(String(e.message ?? e)))
       .finally(() => setStep("idle"));
   };
@@ -294,15 +296,15 @@ function Result({ fix, agent, onChange }: { fix: FixDetail; agent: string; onCha
             <div className="flex gap-2">
               <button
                 onClick={() => setStep("confirm")}
-                disabled={step !== "idle" || !message.trim()}
+                disabled={step !== "idle" || fix.state !== "ready" || !message.trim()}
                 className="flex h-11 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 bg-accent text-[14px] font-semibold text-on-accent disabled:cursor-default disabled:opacity-70"
               >
-                {step === "pushing" ? <Spinner light /> : <Sym name="check" size={18} />}
-                {step === "pushing" ? `Pushing to ${fix.headRef}…` : "Approve and push"}
+                {step === "pushing" || fix.state === "pushing" ? <Spinner light /> : <Sym name="check" size={18} />}
+                {step === "pushing" || fix.state === "pushing" ? `Pushing to ${fix.headRef}…` : "Approve and push"}
               </button>
               <button
                 onClick={decline}
-                disabled={step !== "idle"}
+                disabled={step !== "idle" || fix.state !== "ready"}
                 className="flex h-11 cursor-pointer items-center gap-2 rounded-lg border border-line-strong bg-surface px-4 text-[14px] text-fg-2 hover:bg-hover hover:text-fg disabled:cursor-default"
               >
                 {step === "declining" && <Spinner />}
@@ -311,7 +313,7 @@ function Result({ fix, agent, onChange }: { fix: FixDetail; agent: string; onCha
             </div>
           )}
           {error && <p className="m-0 text-[12.5px] text-del">{error}</p>}
-          <p className="m-0 text-[12.5px] text-fg-3">The commit is yours: your git name and email, no bot trailers. PR Bunny never force-pushes; if the branch moved on GitHub, it stops and asks you to run the fix again.</p>
+          <p className="m-0 text-[12.5px] text-fg-3">The commit is yours: your git name and email, and the message exactly as you leave it. PR Bunny never force-pushes; if the branch moved on GitHub, it stops and asks you to run the fix again.</p>
         </section>
       )}
     </>

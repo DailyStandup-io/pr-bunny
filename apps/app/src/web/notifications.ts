@@ -404,13 +404,10 @@ export function startNotifications() {
   }
 
   // Opened from a desktop alert after every tab was closed.
-  const q = new URLSearchParams(location.search);
-  const open = q.get("open");
+  // Only opens it. A URL never runs Fix or Don't fix: any website could link here.
+  const open = new URLSearchParams(location.search).get("open");
   if (open && /^\d+$/.test(open)) {
     history.replaceState(null, "", location.pathname);
-    const action = q.get("action");
-    if (action === "fix") fixNotification(Number(open)).catch(() => openNotification(Number(open)));
-    else if (action === "skip") skipNotification(Number(open)).catch(() => {});
-    else openNotification(Number(open));
+    openNotification(Number(open));
   }
 }

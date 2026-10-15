@@ -853,16 +853,17 @@ export type NotificationEvent = { type: "notification"; item: AppNotification } 
 
 /**
  * new: the request is loaded, nothing's run. running: the agent is editing a checkout of the PR.
- * ready: the diff is waiting for your approval. pushed: approved and pushed to the PR branch.
- * declined: you turned the diff down. skipped: you chose Don't fix. failed: the run didn't finish.
+ * ready: the diff is waiting for your approval. pushing: you approved and it's being pushed.
+ * pushed: it's on the PR branch. declined: you turned the diff down. skipped: you chose Don't fix.
+ * failed: the run didn't finish.
  */
-export type FixState = "new" | "running" | "ready" | "failed" | "pushed" | "declined" | "skipped";
+export type FixState = "new" | "running" | "ready" | "pushing" | "failed" | "pushed" | "declined" | "skipped";
 
 export interface FixRequestComment {
   id: number;
   author: string;
   path: string;
-  /** Line in the PR's head (null for a file-level or outdated comment). */
+  /** Line in the PR's current head (null for a file-level comment, or one whose code has changed since). */
   line: number | null;
   body: string;
   /** The diff hunk GitHub attached the comment to. */
@@ -908,6 +909,8 @@ export interface FixDetail {
   notAddressed: Array<{ comment: string; why: string }>;
   files: FixFile[];
   pushedSha: string | null;
+  /** Hash of the saved diff; Approve sends it back so only the diff you saw can be pushed. */
+  diffHash: string;
   createdAt: string;
   finishedAt: string | null;
   run: { model: string; costUsd: number | null; durationMs: number | null; inputTokens: number | null; outputTokens: number | null } | null;

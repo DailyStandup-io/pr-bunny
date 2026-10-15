@@ -43,7 +43,7 @@ import { ACTIVITY, attachServer, getBacklog, topic } from "./live";
 import { collaborators, markReady, mergePr, selfPr, watchSelfPrs } from "./prstate";
 import type { MergeMethod } from "../shared/types";
 import { activeRuns, continueRecon, getReview, getRow, lastStoppedRun, listReviews, markRead, recoverInterrupted, retryRecon, startReview } from "./reviews";
-import { approveFix, declineFix, ensureFix, fixBacklog, fixTopic, getFix, recoverInterruptedFixes, runningFixWorktrees, skipFixById, startFix, stopFix } from "./fix";
+import { approveFix, declineFix, ensureFix, fixBacklog, fixTopic, getFix, isFixBusy, recoverInterruptedFixes, skipFixById, startFix, stopFix } from "./fix";
 import { parsePrRef } from "./gh";
 
 recoverInterrupted();
@@ -57,7 +57,7 @@ setInterval(() => void watchSelfPrs().catch(() => {}), 3 * 60_000).unref?.();
 
 // Remove posted/abandoned PR checkouts now and hourly (see cleanup.ts for the rules).
 const runCleanup = () => {
-  cleanupWorktrees({ isRunning: isReviewRunning, runningFixes: runningFixWorktrees() }).catch((e) => console.warn("cleanup failed:", e));
+  cleanupWorktrees({ isRunning: isReviewRunning, isFixBusy }).catch((e) => console.warn("cleanup failed:", e));
   // Settings › Housekeeping › Clear finished reviews (off by default).
   try {
     const n = autoClearReviews();
@@ -379,9 +379,10 @@ const server = Bun.serve<{ reviewId: number; fixId?: number }>({
     // GitHub write: commits the diff you were shown and pushes it to the PR branch. Only from the confirmed Approve click.
     "/api/fixes/:id/approve": {
       POST: api(async (req: R<"/api/fixes/:id/approve">) => {
-        const input = await body<{ commitMessage?: string; headSha?: string }>(req);
+        const input = await body<{ commitMessage?: string; headSha?: string; diffHash?: string }>(req);
         if (typeof input.headSha !== "string" || !/^[0-9a-f]{40}$/.test(input.headSha)) throw new Error("Missing the commit this fix was made on. Reload and try again.");
-        await approveFix(Number(req.params.id), { commitMessage: String(input.commitMessage ?? ""), headSha: input.headSha });
+        if (typeof input.diffHash !== "string" || !/^[0-9a-f]{64}$/.test(input.diffHash)) throw new Error("Missing the diff you approved. Reload and try again.");
+        await approveFix(Number(req.params.id), { commitMessage: String(input.commitMessage ?? ""), headSha: input.headSha, diffHash: input.diffHash });
         return getFix(Number(req.params.id));
       }),
     },

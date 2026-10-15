@@ -56,8 +56,8 @@ export function fixSystem(worktree: string): string {
 
 Environment:
 - The PR's head commit is checked out (detached) in your working directory: ${worktree}
-- You can Read/Grep/Glob and Edit/Write inside it, and run read-only git (diff/log/show/blame/status). Everything else is denied — don't try. You can't run tests, builds or formatters, so read carefully and keep changes small and obviously right.
-- Don't commit, stage or create branches; the tool takes the working tree as it is when you finish.
+- You can Read/Grep/Glob and Edit/Write inside it. Everything else is denied — don't try. You can't run commands, tests, builds or formatters, so read carefully and keep changes small and obviously right. The PR's diff is below.
+- Only edit text files. Don't touch \`.git\`, don't change file modes, symlinks or submodules, and don't commit; the tool takes the working tree as it is when you finish, and refuses anything it can't show the author as a plain diff.
 
 Rules:
 - Do what the reviewer asked, the way they asked it, in the style of the surrounding code. Where a comment leaves room for judgement, pick the simplest change that satisfies it and say so in \`summary\`.

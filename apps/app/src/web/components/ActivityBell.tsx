@@ -33,6 +33,7 @@ const FIX_STATE: Record<string, [string, string]> = {
   new: ["Not started", "var(--text-3)"],
   running: ["Fixing…", "var(--accent)"],
   ready: ["Fix ready to approve", "var(--accent)"],
+  pushing: ["Pushing…", "var(--accent)"],
   failed: ["Fix failed", "var(--warn)"],
   pushed: ["Fixed and pushed", "var(--add)"],
   declined: ["Fix declined", "var(--text-3)"],
@@ -48,7 +49,7 @@ function FixActions({ item, onDone }: { item: AppNotification; onDone: () => voi
     const [label, color] = FIX_STATE[state] ?? ["", "var(--text-3)"];
     return (
       <span className="ml-[42px] flex items-center gap-1.5 pb-1.5 text-[12.5px] font-medium" style={{ color }}>
-        {state === "running" && <Spinner size={11} />}
+        {(state === "running" || state === "pushing") && <Spinner size={11} />}
         {label}
       </span>
     );
