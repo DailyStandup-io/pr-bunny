@@ -5,15 +5,19 @@
 //   bunny review --base <b>      compare against <b> instead of origin's default branch
 //   bunny review --committed     leave uncommitted and untracked files out
 //   bunny review --pr <n>        self-review your PR #n in this repo
+//   bunny review --pr 12,13      several PRs at once (or repeat --pr); they run in parallel
+//   bunny review --deep          go straight on to the deep review once the overview is in
 //   bunny review --rerun         re-run this branch's self-review after fixing
 //   bunny review --no-open       print the link instead of opening it
 //   bunny review --stack         review the whole stack this branch's PR is in (Review all)
 const PORT = Number(process.env.PORT ?? 4477);
 const API = `http://127.0.0.1:${PORT}`;
 
-const USAGE = `usage: bunny review [branch] [--base <branch>] [--committed] [--pr <number>] [--rerun] [--stack] [--no-open]
+const USAGE = `usage: bunny review [branch] [--base <branch>] [--committed] [--pr <number>[,<number>...]] [--deep] [--rerun] [--stack] [--no-open]
 
-Self-reviews your work in PR Bunny before anyone else sees it. Run it inside a checkout.`;
+Self-reviews your work in PR Bunny before anyone else sees it. Run it inside a checkout.
+Repeat --pr (or give a comma list) to start several PRs at once; they review in parallel.
+--deep goes straight on to the in-depth review when the overview is in.`;
 
 const NOT_RUNNING = `PR Bunny isn't running on port ${PORT}. Start it with \`bunny service install\` (or \`bunny setup\`).`;
 
@@ -31,27 +35,60 @@ function fail(msg: string, code = 1): never {
   process.exit(code);
 }
 
+export interface ReviewOpts {
+  branch?: string;
+  base?: string;
+  committed: boolean;
+  prs: number[];
+  rerun: boolean;
+  stack: boolean;
+  deep: boolean;
+  open: boolean;
+}
+
+/** Parses `bunny review` arguments. Throws with the message to show. */
+export function parseReviewArgs(rest: string[]): ReviewOpts {
+  const opts: ReviewOpts = { committed: false, prs: [], rerun: false, stack: false, deep: false, open: true };
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    const value = () => {
+      const v = rest[++i];
+      if (v === undefined) throw new Error(`${a} needs a value.`);
+      return v;
+    };
+    if (a === "--base") opts.base = value();
+    else if (a === "--pr") {
+      for (const part of value().split(",")) {
+        const n = Number(part.trim().replace(/^#/, ""));
+        if (!Number.isInteger(n) || n <= 0) throw new Error("--pr needs a PR number.");
+        if (!opts.prs.includes(n)) opts.prs.push(n);
+      }
+    } else if (a === "--committed") opts.committed = true;
+    else if (a === "--rerun") opts.rerun = true;
+    else if (a === "--stack") opts.stack = true;
+    else if (a === "--deep") opts.deep = true;
+    else if (a === "--no-open") opts.open = false;
+    else if (a.startsWith("-")) throw new Error(`unknown option ${a}.\n\n${USAGE}`);
+    else if (!opts.branch) opts.branch = a;
+    else throw new Error(`unexpected argument "${a}".`);
+  }
+  if (opts.prs.length > 1) {
+    const clash = opts.stack ? "--stack" : opts.rerun ? "--rerun" : opts.branch ? "a branch" : null;
+    if (clash) throw new Error(`${clash} works on one PR at a time; pass a single --pr.`);
+  }
+  return opts;
+}
+
 export async function review(rest: string[]) {
   if (rest.includes("--help") || rest.includes("-h")) {
     console.log(USAGE);
     return;
   }
-  const opts: { branch?: string; base?: string; committed: boolean; pr?: number; rerun: boolean; stack: boolean; open: boolean } = { committed: false, rerun: false, stack: false, open: true };
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i]!;
-    const value = () => rest[++i] ?? fail(`${a} needs a value.`);
-    if (a === "--base") opts.base = value();
-    else if (a === "--pr") {
-      const n = Number(value().replace(/^#/, ""));
-      if (!Number.isInteger(n) || n <= 0) fail("--pr needs a PR number.");
-      opts.pr = n;
-    } else if (a === "--committed") opts.committed = true;
-    else if (a === "--rerun") opts.rerun = true;
-    else if (a === "--stack") opts.stack = true;
-    else if (a === "--no-open") opts.open = false;
-    else if (a.startsWith("-")) fail(`unknown option ${a}.\n\n${USAGE}`);
-    else if (!opts.branch) opts.branch = a;
-    else fail(`unexpected argument "${a}".`);
+  let opts: ReviewOpts;
+  try {
+    opts = parseReviewArgs(rest);
+  } catch (e) {
+    fail((e as Error).message);
   }
 
   async function post(path: string, body: unknown): Promise<any> {
@@ -65,23 +102,40 @@ export async function review(rest: string[]) {
     if (!res.ok) fail(data.error ?? `${res.status} ${res.statusText}`);
     return data;
   }
+  const open = (url: string) => opts.open && Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
 
   const localPath = process.cwd();
   if (opts.stack) {
-    const { id } = await post("/api/stacks", opts.pr ? { pr: opts.pr, ...(await repoOf(localPath)), reviewAll: true } : { localPath, branch: opts.branch, reviewAll: true });
+    const pr = opts.prs[0];
+    const { id } = await post("/api/stacks", pr ? { pr, ...(await repoOf(localPath)), reviewAll: true } : { localPath, branch: opts.branch, reviewAll: true });
     const url = `${(await health()).url}/stack/${id}`;
     console.log(`Reviewing the whole stack → ${url}`);
-    if (opts.open) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+    open(url);
+    return;
+  }
+  const deepNote = opts.deep ? " (deep review follows the overview)" : "";
+  if (opts.prs.length > 1) {
+    // All at once: the server runs every review in parallel.
+    const base = (await health()).url;
+    const outs = await Promise.all(
+      opts.prs.map((pr) => post("/api/self-reviews", { localPath, base: opts.base, includeDirty: !opts.committed, pr, deep: opts.deep })),
+    );
+    console.log(`Started ${opts.prs.length} self-reviews${deepNote}:`);
+    outs.forEach((out, i) => {
+      const url = `${base}/review/${out.id}`;
+      console.log(`  #${opts.prs[i]} ${out.reused ? "already reviewed" : "started"} → ${url}`);
+      open(url);
+    });
     return;
   }
   const out = opts.rerun
     ? await post("/api/self-reviews/rerun", { localPath, branch: opts.branch })
-    : await post("/api/self-reviews", { localPath, branch: opts.branch, base: opts.base, includeDirty: !opts.committed, pr: opts.pr });
+    : await post("/api/self-reviews", { localPath, branch: opts.branch, base: opts.base, includeDirty: !opts.committed, pr: opts.prs[0], deep: opts.deep });
 
   const url = `${(await health()).url}/review/${out.id}`;
-  console.log(opts.rerun ? `Re-running → ${url}` : out.reused ? `Already reviewed; opening it → ${url}` : `Self-review started → ${url}`);
+  console.log(opts.rerun ? `Re-running → ${url}` : out.reused ? `Already reviewed; opening it → ${url}` : `Self-review started${deepNote} → ${url}`);
   if (out.reused && !opts.rerun) console.log("After fixing, run `bunny review --rerun` to check again.");
-  if (opts.open) Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+  open(url);
 }
 
 /** owner/name of the checkout at `path`, from its origin remote. */

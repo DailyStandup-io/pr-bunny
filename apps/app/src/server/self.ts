@@ -9,7 +9,7 @@ import { commitLog, currentBranch, diffWithStats, prepareSelfWorktree } from "./
 import { addReviewers, createPr, parsePrRef, prForBranch, prView, recentCommitters, remoteBranchSha, viewer, type PrRef, type PrView } from "./gh";
 import { checkoutInfo, defaultBase, rememberCheckout } from "./local";
 import { emit } from "./live";
-import { adoptIntoStacks, getRow, insertReview, localPrView, runRecon, setPhase, startOnce } from "./reviews";
+import { adoptIntoStacks, getRow, insertReview, localPrView, markRead, runRecon, startQueuedDeep, setPhase, startOnce } from "./reviews";
 
 export interface StartSelf {
   /** A path inside your checkout (the CLI sends its cwd). */
@@ -22,6 +22,8 @@ export interface StartSelf {
   includeDirty?: boolean;
   /** Review your PR instead of a local branch. */
   pr?: number;
+  /** Go straight on to the deep review once the overview is in (`bunny review --deep`). */
+  deep?: boolean;
 }
 
 const safeRef = (s: string) => /^[\w./-]+$/.test(s) && !s.includes("..") && !s.startsWith("-");
@@ -42,7 +44,7 @@ function existingSelf(repo: string, where: string, arg: string | number): number
  * Self-review of your own PR: reopens the latest non-failed one, else starts one. Callers hold the
  * PR's start guard (`startOnce`); the reuse check is repeated after `prView`, right before inserting.
  */
-export async function startSelfPr(ref: PrRef, known?: PrView): Promise<{ id: number; reused: boolean }> {
+export async function startSelfPr(ref: PrRef, known?: PrView, deep = false): Promise<{ id: number; reused: boolean }> {
   const repo = `${ref.owner}/${ref.repo}`;
   const reused = existingSelf(repo, "v.pr_number = ?", ref.number);
   if (reused) return { id: reused, reused: true };
@@ -51,12 +53,25 @@ export async function startSelfPr(ref: PrRef, known?: PrView): Promise<{ id: num
   if (again) return { id: again, reused: true };
   const id = insertReview(ref, pr, "recon_running");
   db.run("UPDATE reviews SET mode = 'self' WHERE id = ?", [id]);
+  if (deep) markRead(id);
   runRecon(id, ref, pr).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
   return { id, reused: false };
 }
 
-/** Starts (or reopens) a self-review and kicks off its overview in the background. */
+/**
+ * Starts (or reopens) a self-review and kicks off its overview in the background. With `deep`, the
+ * deep review follows the overview; a reopened review whose overview is already in starts it now.
+ */
 export async function startSelfReview(input: StartSelf): Promise<{ id: number; reused: boolean }> {
+  const out = await startSelf(input);
+  if (input.deep && out.reused) {
+    markRead(out.id);
+    await startQueuedDeep(out.id);
+  }
+  return out;
+}
+
+async function startSelf(input: StartSelf): Promise<{ id: number; reused: boolean }> {
   if (input.pr) {
     const repo = input.repo ?? (input.localPath ? (await checkoutInfo(input.localPath)).repo : null);
     if (!repo) throw new Error("Which repo? Pass `repo` or run it from inside a checkout.");
@@ -64,7 +79,7 @@ export async function startSelfReview(input: StartSelf): Promise<{ id: number; r
     // Shares startReview's one-start-per-PR guard, so a concurrent start of the same PR joins this one.
     let reused = true;
     const id = await startOnce(ref, async () => {
-      const r = await startSelfPr(ref);
+      const r = await startSelfPr(ref, undefined, input.deep);
       reused = r.reused;
       return adoptIntoStacks(ref, r.id);
     });
@@ -92,6 +107,7 @@ export async function startSelfReview(input: StartSelf): Promise<{ id: number; r
   };
   const id = insertReview({ owner, repo: repoName, number: 0 }, placeholder, "recon_running");
   db.run("UPDATE reviews SET mode = 'self', local_path = ?, include_dirty = ? WHERE id = ?", [root, input.includeDirty === false ? 0 : 1, id]);
+  if (input.deep) markRead(id);
 
   snapshotAndScan(id).catch((e) => setPhase(id, "failed", e instanceof Error ? e.message : String(e)));
   return { id, reused: false };
