@@ -490,6 +490,18 @@ export async function runRecon(id: number, ref: PrRef, pr: Awaited<ReturnType<ty
   } finally {
     releaseRun(id, ctrl);
   }
+  await startQueuedDeep(id);
+}
+
+/**
+ * "I've read it" (or `bunny review --deep`) can land while the overview is still running; it only
+ * sets `read_at` then. Once the overview is in and its run released, start the deep review it asked for.
+ */
+export async function startQueuedDeep(id: number) {
+  const row = getRow(id);
+  if (row?.phase !== "recon_ready" || !row.read_at) return;
+  const { startDeepReview } = await import("./deep"); // deep.ts imports this module
+  startDeepReview(id);
 }
 
 async function reconSteps(id: number, ref: PrRef, pr: Awaited<ReturnType<typeof prView>>, local: { diff: string } | undefined, signal: AbortSignal) {
@@ -600,7 +612,9 @@ export async function continueRecon(id: number, sessionId: string, turns: number
     saveRecon(id, files, res, diffTruncated, turns);
   })()
     .catch((e) => (ctrl.signal.aborted ? setPhase(id, "cancelled") : setPhase(id, "failed", e instanceof Error ? e.message : String(e))))
-    .finally(() => releaseRun(id, ctrl));
+    .finally(() => releaseRun(id, ctrl))
+    .then(() => startQueuedDeep(id))
+    .catch((e) => console.warn(`review ${id}: couldn't start the deep review:`, e));
 }
 
 /** Sent when resuming a run that hit its turn cap. */

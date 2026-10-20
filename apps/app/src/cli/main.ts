@@ -8,8 +8,8 @@ usage:
   bunny setup [--check] [--yes] [--https | --no-https]
                           set up this Mac: checks, login service, optional https://prbunny.localhost
   bunny open               open PR Bunny in your browser
-  bunny review [branch] [--base <b>] [--committed] [--pr <n>] [--rerun] [--stack] [--no-open]
-                          self-review your work (run inside a checkout)
+  bunny review [branch] [--base <b>] [--committed] [--pr <n>[,<n>...]] [--deep] [--rerun] [--stack] [--no-open]
+                          self-review your work (run inside a checkout); several --pr run in parallel
   bunny service install|uninstall|restart|status
                           manage the login service that keeps PR Bunny running
   bunny serve              run the server in this terminal
