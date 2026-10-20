@@ -1,7 +1,7 @@
 // Per-repo blobless clone cache + one detached worktree per review. Never touches the user's
 // own checkouts.
 import { $ } from "bun";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { REPOS_DIR, WORKTREES_DIR } from "./config";
 import { ghBin } from "./gh";
@@ -70,6 +70,141 @@ export function prepareWorktree(
     await git(clone, ["worktree", "add", "--detach", "--force", path, opts.headSha]);
     return { path, mergeBase, clone };
   });
+}
+
+/**
+ * A checkout for a fix (src/server/fix.ts): the PR head, detached, at `fix-<id>`, where the agent
+ * may edit. Like prepareWorktree, it fetches the PR head first so the commit is in our clone.
+ * `gitDir` is the worktree's admin folder in our clone, read before anything else can touch the
+ * checkout; later git calls use it explicitly instead of trusting the checkout's `.git` file.
+ */
+export function prepareFixWorktree(
+  opts: { fixId: number; owner: string; repo: string; prNumber: number; headSha: string },
+  log: (m: string) => void,
+): Promise<{ path: string; clone: string; gitDir: string }> {
+  return withRepoLock(`${opts.owner}/${opts.repo}`, async () => {
+    const clone = await ensureClone(opts.owner, opts.repo, log);
+    log(`Fetching PR #${opts.prNumber}`);
+    await git(clone, ["fetch", "--quiet", "--force", "origin", `+refs/pull/${opts.prNumber}/head:refs/rp/pr-${opts.prNumber}`]);
+    const path = fixWorktreePath(opts.owner, opts.repo, opts.fixId);
+    if (existsSync(path)) await removeWorktreeUnlocked(clone, path);
+    mkdirSync(join(WORKTREES_DIR, opts.owner, opts.repo), { recursive: true });
+    log(`Checking out ${opts.headSha.slice(0, 8)}`);
+    await git(clone, ["worktree", "add", "--detach", "--force", path, opts.headSha]);
+    const gitDir = await git(path, ["rev-parse", "--absolute-git-dir"]);
+    return { path, clone, gitDir };
+  });
+}
+
+export const fixWorktreePath = (owner: string, repo: string, fixId: number) => join(WORKTREES_DIR, owner, repo, `fix-${fixId}`);
+
+/**
+ * Git in a checkout an agent has had write access to. The admin folder is passed explicitly (a
+ * rewritten `.git` file can't redirect it), and nothing the checkout could influence runs: no
+ * hooks, no fsmonitor; the diff calls also pass --no-ext-diff and --no-textconv.
+ */
+const SAFE_GIT = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.quotePath=false"];
+
+async function guardedGit(worktree: string, gitDir: string, args: string[]): Promise<string> {
+  const dotGit = join(worktree, ".git");
+  let pointer = "";
+  try {
+    pointer = readFileSync(dotGit, "utf8").trim();
+  } catch {}
+  if (pointer !== `gitdir: ${gitDir}`) throw new Error("The checkout's .git was changed during the fix, so PR Bunny won't read it. Run the fix again.");
+  return git(worktree, [...SAFE_GIT, `--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...args]);
+}
+
+export interface FixFileStat {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+/**
+ * Everything the agent changed in a fix checkout, staged, as a plain-text patch plus per-file
+ * stats. The patch is exactly what Approve applies, and exactly what the page shows: no renames
+ * (each side shown in full), no textconv, and changes the page can't show honestly are refused.
+ */
+export async function stagedChanges(worktree: string, gitDir: string): Promise<{ diff: string; files: FixFileStat[] }> {
+  await guardedGit(worktree, gitDir, ["add", "-A"]);
+  const flags = ["diff", "--cached", "--no-renames", "--no-ext-diff", "--no-textconv"];
+  // Not via git(): it trims, and a patch's trailing newline matters.
+  const res = await $`git ${[...SAFE_GIT, `--git-dir=${gitDir}`, `--work-tree=${worktree}`, ...flags, "--text"]}`.cwd(worktree).quiet().nothrow();
+  if (res.exitCode !== 0) throw new Error(`git diff failed: ${res.stderr.toString().trim()}`);
+  const diff = res.stdout.toString();
+  const numstat = await guardedGit(worktree, gitDir, [...flags, "--numstat", "-z"]);
+  const files: FixFileStat[] = [];
+  const binary: string[] = [];
+  for (const rec of numstat.split("\0").filter(Boolean)) {
+    const [a, d, ...p] = rec.split("\t");
+    const path = p.join("\t");
+    if (a === "-" || d === "-") binary.push(path);
+    files.push({ path, additions: Number(a) || 0, deletions: Number(d) || 0 });
+  }
+  const problem = unsupportedChanges(diff, binary);
+  if (problem) throw new Error(problem);
+  return { diff, files };
+}
+
+/**
+ * Changes a fix may not make, because the diff page wouldn't show them faithfully: binary files,
+ * file mode changes (e.g. making a file executable), symlinks and submodules. Null when there are none.
+ */
+export function unsupportedChanges(diff: string, binary: string[] = []): string | null {
+  const found = new Set<string>();
+  if (binary.length) found.add(`changed binary file${binary.length === 1 ? "" : "s"} (${binary.slice(0, 3).join(", ")})`);
+  for (const line of diff.split("\n")) {
+    if (/^(old|new) mode /.test(line) || /^new file mode 100755/.test(line)) found.add("changed a file's mode");
+    if (/^(new|deleted) file mode 120000/.test(line) || /^index \S+ 120000$/.test(line)) found.add("added, changed or removed a symlink");
+    if (/^(new|deleted) file mode 160000/.test(line) || /^index \S+ 160000$/.test(line) || /^Subproject commit /.test(line)) found.add("changed a submodule");
+    if (/^GIT binary patch$/.test(line) || /^Binary files .* differ$/.test(line)) found.add("changed a binary file");
+  }
+  return found.size ? `The fix ${[...found].join(", ")}. PR Bunny only pushes plain text edits it can show you in full, so it stopped here.` : null;
+}
+
+/**
+ * Approving a fix: a fresh checkout of the PR head, the saved patch applied and committed, then
+ * pushed to the PR's branch in the PR's own repo (`origin` here: fork PRs are refused before this).
+ * A plain push: if the branch moved on GitHub, git refuses and nothing changes. Returns the new
+ * commit. Only ever called from the confirmed Approve click.
+ */
+export async function commitAndPush(
+  opts: { fixId: number; owner: string; repo: string; prNumber: number; headSha: string; branch: string; diff: string; message: string; identity: { name: string; email: string } | null },
+  log: (m: string) => void,
+): Promise<string> {
+  const { path, clone } = await prepareFixWorktree(opts, log);
+  try {
+    const patch = join(path, ".git-rp-fix.patch");
+    await Bun.write(patch, opts.diff);
+    await git(path, [...SAFE_GIT, "apply", "--index", "--whitespace=nowarn", patch]);
+    rmSync(patch, { force: true });
+    log("Committing");
+    const identity = opts.identity ? ["-c", `user.name=${opts.identity.name}`, "-c", `user.email=${opts.identity.email}`] : [];
+    await git(path, [...SAFE_GIT, ...identity, "commit", "-q", "--no-verify", "-m", opts.message]);
+    const sha = await git(path, ["rev-parse", "HEAD"]);
+    if ((await git(path, ["rev-parse", "HEAD^"])) !== opts.headSha) throw new Error("The commit isn't on top of the PR head. Nothing was pushed.");
+    log(`Pushing to ${opts.branch}`);
+    const res = await $`git ${SAFE_GIT} push --quiet --no-verify origin ${`${sha}:refs/heads/${opts.branch}`}`.cwd(path).env({ ...process.env, GIT_TERMINAL_PROMPT: "0" }).quiet().nothrow();
+    if (res.exitCode !== 0) {
+      const err = res.stderr.toString().trim();
+      throw new Error(/rejected|non-fast-forward|fetch first/i.test(err) ? `${opts.branch} moved on GitHub since this fix was made. Run the fix again on the new commits.` : `Push failed: ${err}`);
+    }
+    return sha;
+  } finally {
+    await withRepoLock(`${opts.owner}/${opts.repo}`, () => removeWorktreeUnlocked(clone, path));
+  }
+}
+
+/**
+ * The identity git would commit with in `cwd`. Pass the user's own checkout when there is one, so
+ * `includeIf`-scoped identities (a work email for ~/work) apply. Null if none is set.
+ */
+export async function gitIdentity(cwd: string): Promise<{ name: string; email: string } | null> {
+  if (!existsSync(cwd)) return null;
+  const name = (await $`git config user.name`.cwd(cwd).quiet().nothrow()).stdout.toString().trim();
+  const email = (await $`git config user.email`.cwd(cwd).quiet().nothrow()).stdout.toString().trim();
+  return name && email ? { name, email } : null;
 }
 
 async function removeWorktreeUnlocked(clone: string, path: string) {

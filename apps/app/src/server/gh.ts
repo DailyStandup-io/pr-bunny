@@ -265,6 +265,51 @@ export async function myPrReviews(): Promise<MyPrReview[]> {
   return out;
 }
 
+export interface RawPrReview {
+  id: number;
+  author: string;
+  state: string;
+  body: string;
+  submittedAt: string;
+  url: string;
+}
+
+/** Every review on a PR, oldest first (REST, so the ids match the inline comments'). */
+export async function prReviews({ owner, repo, number }: PrRef): Promise<RawPrReview[]> {
+  const raw = await ghJson<any[]>(["api", `repos/${owner}/${repo}/pulls/${number}/reviews`, "--paginate"]);
+  return raw.map((r) => ({ id: r.id, author: r.user?.login ?? "", state: String(r.state ?? ""), body: r.body ?? "", submittedAt: r.submitted_at ?? "", url: r.html_url ?? "" }));
+}
+
+export interface RawReviewComment {
+  id: number;
+  reviewId: number | null;
+  author: string;
+  path: string;
+  /** Line in the PR's current head; null when the comment is outdated (its code changed since) or file-level. */
+  line: number | null;
+  body: string;
+  diffHunk: string | null;
+  url: string;
+  createdAt: string;
+}
+
+/** Every inline review comment on a PR. */
+export async function prReviewComments({ owner, repo, number }: PrRef): Promise<RawReviewComment[]> {
+  const raw = await ghJson<any[]>(["api", `repos/${owner}/${repo}/pulls/${number}/comments`, "--paginate"]);
+  return raw.map((c) => ({
+    id: c.id,
+    reviewId: c.pull_request_review_id ?? null,
+    author: c.user?.login ?? "",
+    path: c.path ?? "",
+    // original_line points into an older commit, so it's no use against the current head.
+    line: typeof c.line === "number" ? c.line : null,
+    body: c.body ?? "",
+    diffHunk: c.diff_hunk ?? null,
+    url: c.html_url ?? "",
+    createdAt: c.created_at ?? "",
+  }));
+}
+
 /** Head commit and state of many PRs in one GraphQL round trip. Keyed `owner/name#number`. */
 export async function prHeads(prs: Array<{ repo: string; number: number }>): Promise<Record<string, { sha: string; state: string; title: string }>> {
   const valid = prs.filter((p) => p.repo.split("/").length === 2 && p.repo.split("/").every((x) => SAFE_NAME.test(x))).slice(0, 60);
@@ -295,6 +340,8 @@ export async function viewer(): Promise<string> {
   viewerLogin ??= (await ghJson<{ login: string }>(["api", "user"])).login;
   return viewerLogin;
 }
+/** Forgets the cached login (tests that switch between fake `gh`s). */
+export const forgetViewer = () => void (viewerLogin = null);
 
 export interface RawStatus {
   state: string;

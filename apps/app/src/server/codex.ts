@@ -49,9 +49,20 @@ export function strictSchema(schema: unknown): unknown {
 
 /** What Codex needs told that Claude gets from its own tools and flags. */
 const CODEX_NOTE = `You're running in Codex with a read-only sandbox and no network. Read code with shell commands (cat, sed -n, rg, git diff/log/show/blame); nothing can be written and \`gh\` can't reach GitHub. Wherever these instructions mention a "structured output tool" or StructuredOutput, that means: finish with your answer as a single JSON object matching the provided schema, with nothing before or after it.`;
+/** The same, for a fix: the checkout may be edited, nothing else. */
+const CODEX_WRITE_NOTE = `You're running in Codex with a sandbox that can write inside the working directory, and no network. Read code with shell commands (cat, sed -n, rg) and edit files with your usual tools; \`gh\` can't reach GitHub. Only change files in the working directory, never its .git, and don't commit. Wherever these instructions mention a "structured output tool" or StructuredOutput, that means: finish with your answer as a single JSON object matching the provided schema, with nothing before or after it.`;
 
 export function buildCodexArgs(o: ClaudeOptions, schemaFile: string | null, cwd: string): string[] {
-  const args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-s", "read-only"];
+  const args = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-s", o.write ? "workspace-write" : "read-only"];
+  // workspace-write also opens /tmp, $TMPDIR and any writable_roots or network access in the
+  // user's ~/.codex/config.toml. A fix gets the working directory and nothing else.
+  if (o.write)
+    args.push(
+      "-c", "sandbox_workspace_write.writable_roots=[]",
+      "-c", "sandbox_workspace_write.network_access=false",
+      "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+      "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+    );
   if (o.model && o.model !== "default") args.push("-m", o.model);
   if (o.effort && o.effort !== "default") args.push("-c", `model_reasoning_effort="${o.effort}"`);
   // A PR can add AGENTS.md; like Claude's settings files, it must not steer the reviewer.
@@ -103,7 +114,7 @@ export async function runCodex<T = unknown>(o: ClaudeOptions): Promise<ClaudeRes
     schemaFile = join(LOG_DIR, `${o.logName}.schema.json`);
     await Bun.write(schemaFile, JSON.stringify(strictSchema(o.jsonSchema)));
   }
-  const prompt = [o.appendSystemPrompt, CODEX_NOTE, o.prompt].filter(Boolean).join("\n\n---\n\n");
+  const prompt = [o.appendSystemPrompt, o.write ? CODEX_WRITE_NOTE : CODEX_NOTE, o.prompt].filter(Boolean).join("\n\n---\n\n");
   const started = Date.now();
   const proc = Bun.spawn([codex, ...buildCodexArgs(o, schemaFile, cwd)], {
     cwd,

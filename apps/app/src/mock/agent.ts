@@ -27,7 +27,7 @@ import { lines } from "./diff";
 import { mockStateDir } from "./git";
 import type { ReconScript, ReviewScript, ScriptFinding, TrailStep } from "./types";
 
-export type Stage = "recon" | "review" | "rereview" | "self-review" | "self-rerun" | "stack" | "qa" | "pr-qa" | "text";
+export type Stage = "recon" | "review" | "rereview" | "self-review" | "self-rerun" | "stack" | "qa" | "pr-qa" | "fix" | "text";
 
 export interface Session {
   id: string;
@@ -43,7 +43,7 @@ export interface Session {
 }
 
 export type Step =
-  | { kind: "tool"; tool: "Read" | "Grep" | "Glob" | "Bash"; input: Record<string, unknown>; result: string }
+  | { kind: "tool"; tool: "Read" | "Grep" | "Glob" | "Bash" | "Edit"; input: Record<string, unknown>; result: string }
   | { kind: "text"; text: string };
 
 export interface Plan {
@@ -85,6 +85,7 @@ const props = (schema: any): Record<string, any> => (schema && typeof schema ===
 export function stageOf(schema: unknown, prompt: string): Stage {
   const p = props(schema);
   if ("headline" in p) return "recon";
+  if ("commitMessage" in p) return "fix";
   if ("verdict" in p) {
     const self = "prompt" in props(p.findings?.items);
     if (self) return /This is RE-RUN \d+ of the self-review/.test(prompt) ? "self-rerun" : "self-review";
@@ -280,9 +281,20 @@ export function outputFor(stage: Stage, t: Target | null, prompt: string, schema
           : "I read the change and the code around it. It does what the title says, and nothing outside the diff depends on the lines it changes.");
       return { output: { answer }, text: answer };
     }
+    case "fix": {
+      const fix = t?.kind === "pr" ? t.pr.fix : undefined;
+      if (!fix) return { output: { summary: "I read the comments and the code around them, and couldn't find a change that clearly satisfies them.", commitMessage: "Address review comments", addressed: [], notAddressed: [] }, text: "No changes." };
+      const { edits, ...out } = fix;
+      return { output: out, text: out.summary };
+    }
     default:
       return { output: null, text: "Done." };
   }
+}
+
+/** The edits the fake agent makes for a fix (applied to its checkout by agents-cli). */
+export function fixEdits(stage: Stage, t: Target | null) {
+  return stage === "fix" && t?.kind === "pr" ? (t.pr.fix?.edits ?? []) : [];
 }
 
 // ---------- the trail ----------
@@ -299,6 +311,7 @@ const BASE_MS: Record<Stage, number> = {
   stack: 30_000,
   qa: 9_000,
   "pr-qa": 9_000,
+  fix: 20_000,
   text: 5_000,
 };
 
@@ -389,6 +402,16 @@ export function planSteps(stage: Stage, t: Target | null, cwd: string, prompt: s
         { kind: "text", text: stage === "qa" ? "Checking the finding against the code again." : "Tracing that through the change." },
       ];
     }
+    case "fix": {
+      const fix = t?.kind === "pr" ? t.pr.fix : undefined;
+      const paths = [...new Set((fix?.edits ?? []).map((e) => e.path))];
+      return [
+        { kind: "text", text: "Reading what the reviewer asked for and the code around each comment." },
+        ...paths.map((p) => toStep({ read: p })),
+        ...paths.map((p): Step => ({ kind: "tool", tool: "Edit", input: { file_path: abs(p) }, result: "The file has been updated." })),
+        { kind: "text", text: "Checking the change against each comment before handing it back." },
+      ];
+    }
     default:
       return [{ kind: "text", text: "Thinking." }];
   }
@@ -408,6 +431,7 @@ export function plan(stage: Stage, t: Target | null, cwd: string, prompt: string
     stack: [0.9, 0.8],
     qa: [0.07, 0.12],
     "pr-qa": [0.08, 0.14],
+    fix: [0.3, 0.4],
     text: [0.01, 0.01],
   };
   const [lo, span] = cost[stage];

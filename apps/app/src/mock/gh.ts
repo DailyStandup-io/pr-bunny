@@ -9,6 +9,8 @@ import {
   BRANCHES,
   findBranch,
   findPr,
+  lineOf,
+  prHeadFiles,
   findRepo,
   minutesAgoIso,
   prsOf,
@@ -21,6 +23,7 @@ import {
   type FixturePr,
   type ShaMap,
 } from "./fixtures";
+import { lines } from "./diff";
 import { cloneRepo, ensureOrigins, mockStateDir, originPath } from "./git";
 
 export interface GhResult {
@@ -150,6 +153,9 @@ function postedReviews(repo: string, n: number) {
 async function viewJson(pr: FixturePr) {
   return prViewJson(pr, Date.now(), await shas(), postedReviews(pr.repo, pr.number));
 }
+
+/** Stable REST ids for fixture reviews (the GraphQL ids are different strings). */
+const reviewId = (p: FixturePr, i: number) => 5_000_000 + (p.number % 100_000) * 10 + i;
 
 const noPr = (repo: string, n: string) => fail(`GraphQL: Could not resolve to a PullRequest with the number of ${n}. (repository.pullRequest)`);
 const noRepo = (repo: string) => fail(`GraphQL: Could not resolve to a Repository with the name '${repo}'. (repository)`);
@@ -368,6 +374,55 @@ async function api(args: string[], stdin: string): Promise<GhResult> {
     const id = 3100000 + readWrites().length;
     const event = String((payload as any)?.event ?? "COMMENT");
     return ok({ id, node_id: `PRR_mock${id}`, state: event === "APPROVE" ? "APPROVED" : event === "REQUEST_CHANGES" ? "CHANGES_REQUESTED" : "COMMENTED", html_url: `${prUrl({ repo, number: n })}#pullrequestreview-${id}`, user: { login: VIEWER.login } });
+  }
+
+  // GET repos/o/r/pulls/N/reviews [--paginate] (what a reviewer asked for, for fixes)
+  if (review) {
+    const p = prOf(repo, Number(review[1]));
+    if (!p) return fail(`gh: Not Found (HTTP 404)`);
+    const now = Date.now();
+    return ok(
+      (p.github?.reviews ?? [])
+        .map((r, i) => ({
+          id: reviewId(p, i),
+          user: { login: r.author, type: "User" },
+          body: r.body ?? "",
+          state: r.state,
+          submitted_at: minutesAgoIso(r.minutesAgo, now),
+          html_url: `${prUrl(p)}#pullrequestreview-${reviewId(p, i)}`,
+        }))
+        .sort((a, b) => a.submitted_at.localeCompare(b.submitted_at)),
+    );
+  }
+
+  // GET repos/o/r/pulls/N/comments [--paginate] (inline review comments)
+  const prComments = rest.match(/^pulls\/(\d+)\/comments$/);
+  if (prComments) {
+    const p = prOf(repo, Number(prComments[1]));
+    if (!p) return fail(`gh: Not Found (HTTP 404)`);
+    const now = Date.now();
+    const head = prHeadFiles(p);
+    return ok(
+      (p.github?.reviews ?? []).flatMap((r, i) =>
+        (r.inline ?? []).map((c, j) => {
+          const { line } = lineOf(head, c.at, `${repo}#${p.number} review comment`);
+          const id = reviewId(p, i) * 100 + j;
+          return {
+            id,
+            pull_request_review_id: reviewId(p, i),
+            user: { login: r.author, type: "User" },
+            path: c.at.path,
+            line,
+            original_line: line,
+            side: "RIGHT",
+            body: c.body,
+            diff_hunk: lines(head.get(c.at.path) ?? "").slice(Math.max(0, line - 4), line).map((l) => ` ${l}`).join("\n"),
+            html_url: `${prUrl(p)}#discussion_r${id}`,
+            created_at: minutesAgoIso(r.minutesAgo, now),
+          };
+        }),
+      ),
+    );
   }
 
   // GET repos/o/r/commits?path=…&per_page=20 (suggested reviewers)

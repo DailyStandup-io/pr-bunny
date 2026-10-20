@@ -787,11 +787,13 @@ export type NotifyKind =
   | "req" // requested as a reviewer
   | "assign" // assigned a PR
   | "stackUpd" // a PR in one of your stacks got new commits
-  | "myReview" // your PR got a review
+  | "myReview" // your PR got a review (approved or commented)
+  | "changesReq" // changes were requested on your PR, with Fix / Don't fix
   | "overview" // the overview is ready
   | "deep" // the deep review finished
-  | "failed" // a review failed or ran out of turns
+  | "failed" // a review or fix failed or ran out of turns
   | "changed" // a PR changed since you reviewed it
+  | "fixReady" // a fix for requested changes is ready to approve
   | "all" // Review all finished on a stack
   | "across" // the across-the-stack pass is ready
   | "update"; // a new PR Bunny version
@@ -834,6 +836,8 @@ export interface AppNotification {
   createdAt: string;
   seen: boolean;
   read: boolean;
+  /** Changes requested on your PR: the fix for it, once you've chosen Fix or Don't fix. */
+  fix: { id: number; state: FixState } | null;
 }
 
 export interface NotificationFeed {
@@ -844,6 +848,78 @@ export interface NotificationFeed {
 
 /** Pushed over /ws/notifications. */
 export type NotificationEvent = { type: "notification"; item: AppNotification } | { type: "sync" };
+
+// ---------- fixes: changes requested on your PR, made by the agent for you to approve ----------
+
+/**
+ * new: the request is loaded, nothing's run. running: the agent is editing a checkout of the PR.
+ * ready: the diff is waiting for your approval. pushing: you approved and it's being pushed.
+ * pushed: it's on the PR branch. declined: you turned the diff down. skipped: you chose Don't fix.
+ * failed: the run didn't finish.
+ */
+export type FixState = "new" | "running" | "ready" | "pushing" | "failed" | "pushed" | "declined" | "skipped";
+
+export interface FixRequestComment {
+  id: number;
+  author: string;
+  path: string;
+  /** Line in the PR's current head (null for a file-level comment, or one whose code has changed since). */
+  line: number | null;
+  body: string;
+  /** The diff hunk GitHub attached the comment to. */
+  hunk: string | null;
+  url: string;
+}
+
+/** One "changes requested" review on the PR, with its inline comments. */
+export interface FixRequest {
+  id: number;
+  author: string;
+  body: string;
+  submittedAt: string;
+  url: string;
+  comments: FixRequestComment[];
+}
+
+export interface FixFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  lines: SnippetLine[];
+}
+
+export interface FixDetail {
+  id: number;
+  repo: string;
+  prNumber: number;
+  title: string;
+  url: string;
+  author: string;
+  headRef: string;
+  baseRef: string;
+  /** The PR commit the fix was made on. */
+  headSha: string;
+  state: FixState;
+  error: string | null;
+  requests: FixRequest[];
+  /** What the agent did, in its words. */
+  summary: string | null;
+  commitMessage: string | null;
+  addressed: Array<{ comment: string; change: string }>;
+  notAddressed: Array<{ comment: string; why: string }>;
+  files: FixFile[];
+  pushedSha: string | null;
+  /** Hash of the saved diff; Approve sends it back so only the diff you saw can be pushed. */
+  diffHash: string;
+  createdAt: string;
+  finishedAt: string | null;
+  run: { model: string; costUsd: number | null; durationMs: number | null; inputTokens: number | null; outputTokens: number | null } | null;
+  /** Progress lines so far, for a page opened mid-run. */
+  lines: Array<{ text: string; tool?: string; at: number }>;
+}
+
+/** Pushed over /ws/fixes/:id. */
+export type FixEvent = { type: "progress"; fixId: number; text: string; tool?: string; at: number } | { type: "state"; fixId: number; state: FixState };
 
 // ---------- cancel and clean up ----------
 

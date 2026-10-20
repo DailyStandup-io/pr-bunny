@@ -52,7 +52,7 @@ export async function releaseWorktree(review: { id: number; owner: string; repo:
   db.run("UPDATE reviews SET worktree_path = NULL WHERE id = ?", [review.id]);
 }
 
-export async function cleanupWorktrees(opts: { isRunning?: (id: number) => boolean } = {}): Promise<{ removed: number; orphans: number }> {
+export async function cleanupWorktrees(opts: { isRunning?: (id: number) => boolean; isFixBusy?: (id: number) => boolean } = {}): Promise<{ removed: number; orphans: number }> {
   let removed = 0;
   for (const c of db.query(CANDIDATES_SQL).all() as Candidate[]) {
     const running = Boolean(c.running) || (opts.isRunning?.(c.id) ?? false);
@@ -69,14 +69,20 @@ export async function cleanupWorktrees(opts: { isRunning?: (id: number) => boole
   const referenced = new Set(
     (db.query("SELECT worktree_path FROM reviews WHERE worktree_path IS NOT NULL").all() as Array<{ worktree_path: string }>).map((r) => r.worktree_path),
   );
+  // Fix checkouts (src/server/fix.ts) only exist while a fix runs or pushes; any left behind are orphans.
   let orphans = 0;
   for (const owner of safeList(WORKTREES_DIR)) {
     for (const repo of safeList(join(WORKTREES_DIR, owner))) {
       for (const dir of safeList(join(WORKTREES_DIR, owner, repo))) {
         const path = join(WORKTREES_DIR, owner, repo, dir);
-        if (!dir.startsWith("review-") || referenced.has(path)) continue;
-        const id = Number(dir.slice("review-".length));
-        if (opts.isRunning?.(id)) continue;
+        if (dir.startsWith("fix-")) {
+          // Asked live, per checkout: a fix can start (or a push begin) while cleanup is running.
+          if (opts.isFixBusy?.(Number(dir.slice("fix-".length)))) continue;
+        } else {
+          if (!dir.startsWith("review-") || referenced.has(path)) continue;
+          const id = Number(dir.slice("review-".length));
+          if (opts.isRunning?.(id)) continue;
+        }
         await removeWorktree(owner, repo, path).catch(() => {});
         orphans++;
       }

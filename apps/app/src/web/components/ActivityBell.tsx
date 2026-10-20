@@ -7,15 +7,17 @@ import { useEffect, useRef, useState } from "react";
 import type { AppNotification, NotificationSettings } from "../../shared/types";
 import { Icon } from "@pr-bunny/icons";
 import { navigate } from "../api";
-import { bell, browserName, notifySettings, openNotification, useFeed, usePermission } from "../notifications";
+import { bell, browserName, fixNotification, notifySettings, openNotification, skipNotification, useFeed, usePermission } from "../notifications";
 import { BUNNY_FACES, flashBunny } from "./Bunny";
 import { RAIL_GAP, useRailPopover } from "./RailTip";
-import { Sym } from "./ui";
+import { Spinner, Sym } from "./ui";
 
 const ICON: Record<AppNotification["kind"], [string, string]> = {
   req: ["rate_review", "var(--accent)"],
   assign: ["assignment_ind", "var(--accent)"],
   myReview: ["edit_note", "var(--text-2)"],
+  changesReq: ["rule", "var(--del)"],
+  fixReady: ["auto_fix_high", "var(--accent)"],
   stackUpd: ["layers", "var(--text-2)"],
   overview: ["article", "var(--text-2)"],
   deep: ["check_circle", "var(--add)"],
@@ -25,6 +27,62 @@ const ICON: Record<AppNotification["kind"], [string, string]> = {
   across: ["account_tree", "var(--text-2)"],
   update: ["upgrade", "var(--text-2)"],
 };
+
+/** What happened to the fix for a changes-requested entry, as the bell shows it. */
+const FIX_STATE: Record<string, [string, string]> = {
+  new: ["Not started", "var(--text-3)"],
+  running: ["Fixing…", "var(--accent)"],
+  ready: ["Fix ready to approve", "var(--accent)"],
+  pushing: ["Pushing…", "var(--accent)"],
+  failed: ["Fix failed", "var(--warn)"],
+  pushed: ["Fixed and pushed", "var(--add)"],
+  declined: ["Fix declined", "var(--text-3)"],
+  skipped: ["Not fixing", "var(--text-3)"],
+};
+
+/** Fix / Don't fix under a changes-requested entry, or what came of it. */
+function FixActions({ item, onDone }: { item: AppNotification; onDone: () => void }) {
+  const [busy, setBusy] = useState<"fix" | "skip" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const state = item.fix?.state;
+  if (state && state !== "new") {
+    const [label, color] = FIX_STATE[state] ?? ["", "var(--text-3)"];
+    return (
+      <span className="ml-[42px] flex items-center gap-1.5 pb-1.5 text-[12.5px] font-medium" style={{ color }}>
+        {(state === "running" || state === "pushing") && <Spinner size={11} />}
+        {label}
+      </span>
+    );
+  }
+  const go = (what: "fix" | "skip") => {
+    setBusy(what);
+    setError(null);
+    (what === "fix" ? fixNotification(item.id).then(onDone) : skipNotification(item.id)).catch((e) => setError(String(e.message ?? e))).finally(() => setBusy(null));
+  };
+  return (
+    <div className="ml-[42px] flex flex-col gap-1 pr-2.5 pb-2">
+      <div className="flex gap-1.5">
+        <button
+          onClick={() => go("fix")}
+          disabled={busy != null}
+          className="flex h-[30px] cursor-pointer items-center gap-1.5 rounded-[7px] border-0 bg-accent px-3 text-[12.5px] font-semibold text-on-accent disabled:cursor-default disabled:opacity-70"
+        >
+          {busy === "fix" ? <Spinner size={11} light /> : <Sym name="auto_fix_high" size={15} />}
+          Fix
+        </button>
+        <button
+          onClick={() => go("skip")}
+          disabled={busy != null}
+          className="flex h-[30px] cursor-pointer items-center gap-1.5 rounded-[7px] border border-line-strong bg-surface px-3 text-[12.5px] text-fg-2 hover:bg-hover hover:text-fg disabled:cursor-default"
+        >
+          {busy === "skip" && <Spinner size={11} />}
+          Don't fix
+        </button>
+      </div>
+      {error && <span className="text-[12px] text-del">{error}</span>}
+    </div>
+  );
+}
 
 const when = (iso: string, now = Date.now()) => {
   const t = new Date(iso.includes("T") ? iso : `${iso.replace(" ", "T")}Z`);
@@ -154,7 +212,7 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
                 {g.items.map((i) => {
                   const [icon, color] = i.kind === "myReview" && i.face === "hearts" ? ["thumb_up", "var(--add)"] : ICON[i.kind];
                   return (
-                    <li key={i.id}>
+                    <li key={i.id} className={i.kind === "changesReq" ? "rounded-lg hover:bg-hover [&>button:hover]:bg-transparent" : undefined}>
                       <button
                         onClick={() => {
                           setOpen(false);
@@ -172,6 +230,7 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
                         </span>
                         <span className={`mt-1.5 size-2 flex-none rounded-full ${i.read ? "bg-transparent" : "bg-accent"}`} />
                       </button>
+                      {i.kind === "changesReq" && <FixActions item={i} onDone={() => setOpen(false)} />}
                     </li>
                   );
                 })}
@@ -184,7 +243,7 @@ export function ActivityBell({ compact = false }: { compact?: boolean }) {
         <div className="flex flex-col items-center gap-1.5 px-6 pt-7 pb-8 text-center">
           {BUNNY_FACES.happy && <img src={BUNNY_FACES.happy} alt="" className="size-12 [image-rendering:pixelated]" />}
           <p className="mt-1.5 mb-0 text-[14.5px] font-medium">Nothing yet</p>
-          <p className="m-0 max-w-[260px] text-[13px] text-pretty text-fg-3">Review requests, finished reviews and stack updates show up here.</p>
+          <p className="m-0 max-w-[260px] text-[13px] text-pretty text-fg-3">Review requests, finished reviews, changes requested on your PRs and stack updates show up here.</p>
         </div>
       )}
       {allOff && (

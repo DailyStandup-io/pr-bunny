@@ -314,6 +314,8 @@ export function prViewJson(pr: FixturePr, now: number, shas?: ShaMap, extraRevie
     reviewRequests: pr.requestedBy ? [{ login: VIEWER.login }] : [],
     assignees: pr.assigned ? [{ login: VIEWER.login }] : [],
     repository: { name: pr.repo.split("/")[1], nameWithOwner: pr.repo },
+    // Tests mark PRs as coming from a fork with PR_BUNNY_MOCK_FORK_PRS="owner/name#123,…".
+    isCrossRepository: (process.env.PR_BUNNY_MOCK_FORK_PRS ?? "").split(",").includes(`${pr.repo}#${pr.number}`),
     commits: pr.commits.map((c, i) => ({ oid: headSha(pr, shas, i + 1), messageHeadline: c.message })),
   };
 }

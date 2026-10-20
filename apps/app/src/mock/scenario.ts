@@ -100,6 +100,7 @@ export function seedLivedIn(ctx: Ctx & { home: string }): LivedIn {
   // ---------- the bell ----------
   seedNotifications(
     [
+      { kind: "changesReq", title: "Changes requested on #1495", body: `@jonah-pike left 2 comments on ${pr("checkout", 1495).title}. Fix it with Claude, or not.`, summary: "@jonah-pike requested changes", pr: pr("checkout", 1495), href: "https://github.com/quokka-labs/checkout/pull/1495", face: "wobbly", minutesAgo: 18 },
       { kind: "req", title: `Review requested: ${pr("mobile", 88).title}`, body: "@sol-hartley · quokka-labs/mobile #88", summary: "@sol-hartley asked you to review", pr: pr("mobile", 88), href: "/", face: "wink", minutesAgo: 25 },
       { kind: "myReview", title: "Approved: #1495", body: `@lena-okoro left 1 comment on ${pr("checkout", 1495).title}.`, summary: "@lena-okoro approved", pr: pr("checkout", 1495), face: "hearts", minutesAgo: 50 },
       { kind: "changed", title: "Changed since your review · #238", body: `New commits on ${pr("api", 238).title}. quokka-labs/api`, summary: "New commits since your review", pr: pr("api", 238), reviewId: R.r238, face: "surprised", minutesAgo: 40, seen: true },
@@ -127,7 +128,8 @@ export function seedLivedIn(ctx: Ctx & { home: string }): LivedIn {
       `Stack "checkout-v2" (#1482→#1485) has Review all running: /stack/${S["checkout-v2"]}`,
       `Stack "refunds" (#243→#244) has across-the-stack findings to decide: /stack/${S.refunds}`,
       "Hidden in the inbox: api#237 (for good) and checkout#1497 (until it changes)",
-      "Bell: 9 notifications, 4 unread (2 new since you last looked)",
+      "Bell: 10 notifications, 5 unread (3 new since you last looked)",
+      "Bell: #1495 (checkout, yours) has changes requested by @jonah-pike; Fix runs the agent and shows the diff to approve",
     ],
   };
 }
